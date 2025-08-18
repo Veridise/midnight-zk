@@ -125,7 +125,7 @@ where
                     let is_committed_instance = i < nb_committed_instances;
                     let mut poly = domain.empty_lagrange();
                     assert_eq!(poly.len(), domain.n as usize);
-                    if values.len() > (poly.len() - (meta.blinding_factors() + 1)) {
+                    if values.len() > (poly.len() - (meta.nr_blinding_factors() + 1)) {
                         return Err(Error::InstanceTooLarge);
                     }
                     if !is_committed_instance {
@@ -321,7 +321,7 @@ where
         ];
         let mut challenges = HashMap::<usize, F>::with_capacity(meta.num_challenges);
 
-        let unusable_rows_start = domain.n as usize - (meta.blinding_factors() + 1);
+        let unusable_rows_start = domain.n as usize - (meta.nr_blinding_factors() + 1);
         for current_phase in pk.vk.cs.phases() {
             let column_indices = meta
                 .advice_column_phase
@@ -516,7 +516,7 @@ where
     // Commit to the vanishing argument's random polynomial for blinding h(x_3)
     let vanishing = vanishing::Argument::<F, CS>::commit(params, domain, &mut rng, transcript)?;
 
-    // Obtain challenge for keeping all separate gates linearly independent
+    // Sample identity batching challenge y, for batching all independent identities
     let y: F = transcript.squeeze_challenge();
 
     let (instance_polys, instance_values) = instance
@@ -615,7 +615,7 @@ where
         })
         .collect();
 
-    // Evaluate the h(X) polynomial
+    // Evaluate the polynomial h(X) (which is the numerator of the quotient polynomial)
     let h_poly = pk.ev.evaluate_h::<ExtendedLagrangeCoeff>(
         &pk.vk.domain,
         &pk.vk.cs,
@@ -648,10 +648,13 @@ where
     drop(advice_cosets);
     drop(instance_cosets);
 
-    // Construct the vanishing argument's h(X) commitments
+    // Construct the vanishing argument's commitments: the (batched) quotient polynomial
+    // h(X)/(X^n-1) is split into limbs, and each limb is committed separately and written
+    // to the transcript
     let vanishing =
         vanishing.construct::<CS, T>(params, pk.get_vk().get_domain(), h_poly, transcript)?;
 
+    // Sample evaluation challenge x
     let x: F = transcript.squeeze_challenge();
 
     // Compute and hash evals for the polynomials of the committed instances of
@@ -684,9 +687,12 @@ where
     }
 
     // Compute and hash fixed evals (shared across all circuit instances)
+    // fixed_evals is sorted according to fixed_queries (which is NOT sorted
+    // per column index, but in the order in which queries were added)
     let fixed_evals: Vec<_> = meta
         .fixed_queries
         .iter()
+        // .filter(|(column, _)| !meta.indices_simple_selectors.contains(&column.index()))
         .map(|&(column, at)| {
             eval_polynomial(&pk.fixed_polys[column.index()], domain.rotate_omega(x, at))
         })

@@ -360,8 +360,8 @@ impl<F: WithSmallOrderMulGroup<3>> Evaluator<F> {
             // Permutations
             let sets = &permutation.sets;
             if !sets.is_empty() {
-                let blinding_factors = cs.blinding_factors();
-                let last_rotation = Rotation(-((blinding_factors + 1) as i32));
+                let nr_blinding_factors = cs.nr_blinding_factors();
+                let last_rotation = Rotation(-((nr_blinding_factors + 1) as i32));
                 let chunk_len = cs.degree() - 2;
                 let delta_start = beta * &B::g_coset(domain);
 

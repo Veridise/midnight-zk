@@ -32,6 +32,12 @@ pub struct Evaluated<F: PrimeField, CS: PolynomialCommitmentScheme<F>> {
     random_eval: F,
 }
 
+impl<F: PrimeField, CS: PolynomialCommitmentScheme<F>> Evaluated<F, CS> {
+    pub fn expected_h_eval(&self) -> F {
+        self.expected_h_eval
+    }
+}
+
 impl<F: PrimeField, CS: PolynomialCommitmentScheme<F>> Argument<F, CS> {
     pub(in crate::plonk) fn read_commitments_before_y<T: Transcript>(
         transcript: &mut T,

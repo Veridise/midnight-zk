@@ -1654,6 +1654,8 @@ pub struct ConstraintSystem<F: Field> {
     pub(crate) num_advice_columns: usize,
     pub(crate) num_instance_columns: usize,
     pub(crate) num_selectors: usize,
+    pub(crate) selector_flags: Vec<bool>,
+    pub(crate) indices_simple_selectors: Vec<usize>,
     pub(crate) num_challenges: usize,
 
     /// Contains the index of each advice column that is left unblinded.
@@ -1785,6 +1787,8 @@ impl<F: Field> Default for ConstraintSystem<F> {
             num_advice_columns: 0,
             num_instance_columns: 0,
             num_selectors: 0,
+            selector_flags: vec![],
+            indices_simple_selectors: vec![],
             num_challenges: 0,
             unblinded_advice_columns: Vec::new(),
             advice_column_phase: Vec::new(),
@@ -2071,12 +2075,17 @@ impl<F: Field> ConstraintSystem<F> {
 
         let (polys, selector_replacements): (Vec<_>, Vec<_>) = selectors
             .into_iter()
-            .map(|selector| {
+            .enumerate()
+            .map(|(idx, selector)| {
+                // Convert selector column of false/true into column of 0/1
                 let poly = selector
                     .iter()
                     .map(|b| if *b { F::ONE } else { F::ZERO })
                     .collect::<Vec<_>>();
                 let column = self.fixed_column();
+                if self.selector_flags[idx] {
+                    self.indices_simple_selectors.push(column.index());
+                }
                 let rotation = Rotation::cur();
                 let expr = Expression::Fixed(FixedQuery {
                     index: Some(self.query_fixed_index(column, rotation)),
@@ -2153,6 +2162,7 @@ impl<F: Field> ConstraintSystem<F> {
     pub fn selector(&mut self) -> Selector {
         let index = self.num_selectors;
         self.num_selectors += 1;
+        self.selector_flags.push(true);
         Selector(index, true)
     }
 
@@ -2161,6 +2171,7 @@ impl<F: Field> ConstraintSystem<F> {
     pub fn complex_selector(&mut self) -> Selector {
         let index = self.num_selectors;
         self.num_selectors += 1;
+        self.selector_flags.push(false);
         Selector(index, false)
     }
 
@@ -2348,7 +2359,7 @@ impl<F: Field> ConstraintSystem<F> {
 
     /// Compute the number of blinding factors necessary to perfectly blind
     /// each of the prover's witness polynomials.
-    pub fn blinding_factors(&self) -> usize {
+    pub fn nr_blinding_factors(&self) -> usize {
         // All of the prover's advice columns are evaluated at no more than
         let factors = *self.num_advice_queries.iter().max().unwrap_or(&1);
         // distinct points during gate checks.
@@ -2382,7 +2393,7 @@ impl<F: Field> ConstraintSystem<F> {
     /// Returns the minimum necessary rows that need to exist in order to
     /// account for e.g. blinding factors.
     pub fn minimum_rows(&self) -> usize {
-        self.blinding_factors() // m blinding factors
+        self.nr_blinding_factors() // m blinding factors
             + 1 // for l_{-(m + 1)} (l_last)
             + 1 // for l_0 (just for extra breathing room for the permutation
                 // argument, to essentially force a separation in the

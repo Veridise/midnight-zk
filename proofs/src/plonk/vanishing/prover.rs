@@ -116,7 +116,7 @@ impl<F: WithSmallOrderMulGroup<3>> Committed<F> {
             .map(|h_piece| CS::commit(params, h_piece))
             .collect();
 
-        // Hash each h(X) piece
+        // Hash commitments to the limbs of h(X)
         for c in h_commitments {
             transcript.write(&c)?;
         }

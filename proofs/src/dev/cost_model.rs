@@ -320,7 +320,7 @@ fn from_circuit_to_cost_model_options<F: Ord + Field + FromUniformBytes<64>, C: 
     let permutation = Permutation {
         chunk_len: cs.degree() - 2,
         columns: cs.permutation().get_columns().len(),
-        u: -((cs.blinding_factors() + 1) as isize),
+        u: -((cs.nr_blinding_factors() + 1) as isize),
     };
 
     // Note that this computation does't assume that `regions` is already in
@@ -352,8 +352,8 @@ fn from_circuit_to_cost_model_options<F: Ord + Field + FromUniformBytes<64>, C: 
     };
 
     let min_k = [
-        rows_count + cs.blinding_factors(),
-        table_rows_count + cs.blinding_factors(),
+        rows_count + cs.nr_blinding_factors(),
+        table_rows_count + cs.nr_blinding_factors(),
         nb_instances,
     ]
     .into_iter()
@@ -432,8 +432,8 @@ impl<F: FromUniformBytes<64> + Ord> DevAssembly<F> {
         let fixed = vec![vec![CellValue::Unassigned; n]; cs.num_fixed_columns];
         let selectors = vec![vec![false; n]; cs.num_selectors];
         // Advice columns contain blinding factors.
-        let blinding_factors = cs.blinding_factors();
-        let usable_rows = n - (blinding_factors + 1);
+        let nr_blinding_factors = cs.nr_blinding_factors();
+        let usable_rows = n - (nr_blinding_factors + 1);
         let _advice = vec![
             {
                 let mut column = vec![CellValue::Unassigned; n];

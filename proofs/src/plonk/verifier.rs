@@ -71,8 +71,8 @@ where
         }
     }
 
-    // Hash the prover's advice commitments into the transcript and squeeze
-    // challenges
+    // Obtain the prover's advice commitments from the proof, hash them into the transcript,
+    // and squeeze challenges
     let (advice_commitments, challenges) = {
         let mut advice_commitments =
             vec![vec![CS::Commitment::default(); vk.cs.num_advice_columns]; num_proofs];
@@ -101,12 +101,13 @@ where
         (advice_commitments, challenges)
     };
 
-    // Sample theta challenge for keeping lookup columns linearly independent
+    // Sample theta challenge for batching lookup columns
     let theta: F = transcript.squeeze_challenge();
 
-    let lookups_permuted = (0..num_proofs)
+    // Read commitments to permuted input and table columns from the transcript
+    let lookup_permuted_commitments = (0..num_proofs)
         .map(|_| -> Result<Vec<_>, _> {
-            // Hash each lookup permuted commitment
+            // Read each lookup permuted commitment from the transcript
             vk.cs
                 .lookups
                 .iter()
@@ -115,23 +116,21 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Sample beta challenge
+    // Sample beta challenge for permutation argument
     let beta: F = transcript.squeeze_challenge();
 
-    // Sample gamma challenge
+    // Sample gamma challenge for permutation argument
     let gamma: F = transcript.squeeze_challenge();
 
-    let permutations_committed = (0..num_proofs)
-        .map(|_| {
-            // Hash each permutation product commitment
-            vk.cs.permutation.read_product_commitments(vk, transcript)
-        })
+    // Read commitments to product polynomial of permutation argument from the transcript
+    let permutation_product_commitments = (0..num_proofs)
+        .map(|_| vk.cs.permutation.read_product_commitments(vk, transcript))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let lookups_committed = lookups_permuted
+    // Read commitments to product polynomial of lookup argument from the transcript
+    let lookup_product_commitments = lookup_permuted_commitments
         .into_iter()
         .map(|lookups| {
-            // Hash each lookup product commitment
             lookups
                 .into_iter()
                 .map(|lookup| lookup.read_product_commitment(transcript))
@@ -139,9 +138,11 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
+    // Sample trash challenge
     let trash_challenge: F = transcript.squeeze_challenge();
 
-    let trashcans_committed = (0..num_proofs)
+    // Read commitments to trashcans from transcript
+    let trashcan_commitments = (0..num_proofs)
         .map(|_| -> Result<Vec<_>, _> {
             vk.cs
                 .trashcans
@@ -153,15 +154,15 @@ where
 
     let vanishing = vanishing::Argument::read_commitments_before_y(transcript)?;
 
-    // Sample y challenge, which keeps the gates linearly independent.
+    // Sample identity batching challenge y, for batching all independent identities
     let y: F = transcript.squeeze_challenge();
 
     Ok(VerifierTrace {
         advice_commitments,
         vanishing,
-        lookups: lookups_committed,
-        trashcans: trashcans_committed,
-        permutations: permutations_committed,
+        lookups: lookup_product_commitments,
+        trashcans: trashcan_commitments,
+        permutations: permutation_product_commitments,
         challenges,
         beta,
         gamma,
@@ -202,6 +203,7 @@ where
     let nb_committed_instances = committed_instances[0].len();
     let num_proofs = instances.len();
 
+    // Destructuring assignment of given verifier trace
     let VerifierTrace {
         advice_commitments,
         vanishing,
@@ -216,10 +218,10 @@ where
         y,
     } = trace;
 
+    // Read commitments to limbs of the quotient polynomial h(X)/(X^n-1) from the transcript
     let vanishing = vanishing.read_commitments_after_y(vk, transcript)?;
 
-    // Sample x challenge, which is used to ensure the circuit is
-    // satisfied with high probability.
+    // Sample evaluation challenge x
     let x: F = transcript.squeeze_challenge();
     let xn = x.pow_vartime([vk.n()]);
 
@@ -270,11 +272,15 @@ where
             .collect::<Result<Vec<_>, _>>()?
     };
 
+    // Read evals of all advice polys from transcript
     let advice_evals = (0..num_proofs)
         .map(|_| -> Result<Vec<_>, _> { read_n(transcript, vk.cs.advice_queries.len()) })
         .collect::<Result<Vec<_>, _>>()?;
 
+    // Read evals of all fixed polys from transcript (currently, fixed evals also include
+    // evals of simple selectors)
     let fixed_evals = read_n(transcript, vk.cs.fixed_queries.len())?;
+
     let vanishing = vanishing.evaluate_after_x(transcript)?;
 
     let permutations_common = vk.permutation.evaluate(transcript)?;
@@ -304,19 +310,28 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
+    // Collect commitments belonging to simple selectors
+    let mut simple_selector_commitments = Vec::with_capacity(vk.cs.indices_simple_selectors.len());
+    for idx in &vk.cs.indices_simple_selectors {
+        simple_selector_commitments.push(&vk.fixed_commitments[*idx]);
+    }
+
     // This check ensures the circuit is satisfied so long as the polynomial
     // commitments open to the correct values.
     let vanishing = {
-        let blinding_factors = vk.cs.blinding_factors();
+        // x^n
+        let xn = x.pow([vk.n()]);
+
+        let nr_blinding_factors = vk.cs.nr_blinding_factors();
         let l_evals = vk
             .domain
-            .l_i_range(x, xn, (-((blinding_factors + 1) as i32))..=0);
-        assert_eq!(l_evals.len(), 2 + blinding_factors);
+            .l_i_range(x, xn, (-((nr_blinding_factors + 1) as i32))..=0);
+        assert_eq!(l_evals.len(), 2 + nr_blinding_factors);
         let l_last = l_evals[0];
-        let l_blind: F = l_evals[1..(1 + blinding_factors)]
+        let l_blind: F = l_evals[1..(1 + nr_blinding_factors)]
             .iter()
             .fold(F::ZERO, |acc, eval| acc + eval);
-        let l_0 = l_evals[1 + blinding_factors];
+        let l_0 = l_evals[1 + nr_blinding_factors];
 
         // Compute the expected value of h(x)
         let expressions = advice_evals
@@ -338,6 +353,7 @@ where
                                     &|_| {
                                         panic!("virtual selectors are removed during optimization")
                                     },
+                                    // TODO: change query here
                                     &|query| fixed_evals[query.index.unwrap()],
                                     &|query| advice_evals[query.index.unwrap()],
                                     &|query| instance_evals[query.index.unwrap()],
@@ -398,6 +414,11 @@ where
         vanishing.verify(expressions, y, xn)
     };
 
+    // TODO: we only need eval of h without fixed columns corresponding to selectors
+    let h_x = vanishing.expected_h_eval();
+
+    // Collect queries that are checked in multi-open argument: queries corresponding
+    // to simple-selectors need not be checked
     let queries = committed_instances
         .iter()
         .zip(instance_evals.iter())
@@ -450,17 +471,26 @@ where
                 .fixed_queries
                 .iter()
                 .enumerate()
+                // TODO: filter out queries for fixed columns corresponding to
+                // simple selectors
                 .map(|(query_index, &(column, at))| {
                     VerifierQuery::new(
                         vk.domain.rotate_omega(x, at),
+                        // fixed_commitments is sorted per column_index
                         &vk.fixed_commitments[column.index()],
+                        // fixed_evals is sorted according to fixed_queries
                         fixed_evals[query_index],
                     )
                 }),
         )
         .chain(permutations_common.queries(&vk.permutation, x))
-        .chain(vanishing.queries(x, vk.n()))
         .collect::<Vec<_>>();
+
+    // TODO: do checks with partial evaluations here
+    // TODO: reconstruct h_poly here and subtract other (batched) commitments here
+    // TODO: don't need random poly afterwards?! Saving commitment+eval in trace
+
+    // .chain(vanishing.queries(x, vk.n()));
 
     // We are now convinced the circuit is satisfied so long as the
     // polynomial commitments open to the correct values.
