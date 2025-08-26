@@ -105,8 +105,6 @@ type NG = NativeGadget<F, P2RDecompositionChip<F>, NativeChip<F>>;
 type Secp256k1BaseChip = FieldChip<F, secp256k1::Fp, MEP, NG>;
 type Secp256k1ScalarChip = FieldChip<F, secp256k1::Fq, MEP, NG>;
 type Secp256k1Chip = ForeignEccChip<F, Secp256k1, MEP, Secp256k1ScalarChip, NG>;
-type Bls12381BaseChip = FieldChip<F, midnight_curves::Fp, MEP, NG>;
-type Bls12381Chip = ForeignEccChip<F, midnight_curves::G1Projective, MEP, NG, NG>;
 
 /// Size of the lookup table for SHA.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -197,12 +195,11 @@ pub struct ZkStdLibConfig {
     core_decomposition_config: P2RDecompositionConfig,
     table11_config: Option<Table11Config>,
     table16_config: Option<Table16Config>,
-    poseidon_config: Option<PoseidonConfig<midnight_curves::Fq>>,
+    poseidon_config: Option<PoseidonConfig<halo2curves::bn256::Fr>>,
     secp256k1_scalar_config: Option<FieldChipConfig>,
     secp256k1_config: Option<ForeignEccConfig<Secp256k1>>,
-    bls12_381_config: Option<ForeignEccConfig<midnight_curves::G1Projective>>,
     base64_config: Option<Base64Config>,
-    automaton_config: Option<AutomatonConfig<StdLibParser, midnight_curves::Fq>>,
+    automaton_config: Option<AutomatonConfig<StdLibParser, halo2curves::bn256::Fr>>,
 }
 
 /// The `ZkStdLib` exposes all tools that are used in circuit generation.
@@ -218,7 +215,6 @@ pub struct ZkStdLib {
     biguint_gadget: BigUintGadget<F, NG>,
     secp256k1_scalar_chip: Option<Secp256k1ScalarChip>,
     secp256k1_curve_chip: Option<Secp256k1Chip>,
-    bls12_381_curve_chip: Option<Bls12381Chip>,
     base64_chip: Option<Base64Chip<F>>,
     parser_gadget: ParserGadget<F, NG>,
     vector_gadget: VectorGadget<F>,
@@ -232,21 +228,16 @@ pub struct ZkStdLib {
 impl ZkStdLib {
     /// Creates a new [ZkStdLib] given its config.
     pub fn new(config: &ZkStdLibConfig, max_bit_len: usize) -> Self {
-        let native_chip = NativeChip::new(&config.native_config, &());
+        let native_chip = NativeChip::<F>::new(&config.native_config, &());
         let core_decomposition_chip =
             P2RDecompositionChip::new(&config.core_decomposition_config, &max_bit_len);
         let native_gadget = NativeGadget::new(core_decomposition_chip.clone(), native_chip.clone());
-        let jubjub_chip = (config.jubjub_config.as_ref())
-            .map(|jubjub_config| EccChip::new(jubjub_config, &native_gadget));
         let sha256_table11_chip = (config.table11_config.as_ref())
             .map(|table11_config| Table11Chip::construct(table11_config.clone()));
         let sha256_table16_chip = (config.table16_config.as_ref())
             .map(|table16_config| Table16Chip::construct(table16_config.clone()));
         let poseidon_gadget = (config.poseidon_config.as_ref())
             .map(|poseidon_config| PoseidonChip::new(poseidon_config, &native_chip));
-        let htc_gadget = (jubjub_chip.as_ref())
-            .zip(poseidon_gadget.as_ref())
-            .map(|(ecc_chip, poseidon_gadget)| HashToCurveGadget::new(poseidon_gadget, ecc_chip));
         let biguint_gadget = BigUintGadget::new(&native_gadget);
         let map_gadget = poseidon_gadget
             .as_ref()
@@ -258,8 +249,6 @@ impl ZkStdLib {
             .map(|(curve_config, scalar_chip)| {
                 ForeignEccChip::new(curve_config, &native_gadget, scalar_chip)
             });
-        let bls12_381_curve_chip = (config.bls12_381_config.as_ref())
-            .map(|curve_config| ForeignEccChip::new(curve_config, &native_gadget, &native_gadget));
 
         let base64_chip = (config.base64_config.as_ref())
             .map(|base64_config| Base64Chip::new(base64_config, &native_gadget));
@@ -272,16 +261,13 @@ impl ZkStdLib {
         Self {
             native_gadget,
             core_decomposition_chip,
-            jubjub_chip,
             sha256_table11_chip,
             sha256_table16_chip,
             poseidon_gadget,
             map_gadget,
-            htc_gadget,
             biguint_gadget,
             secp256k1_scalar_chip,
             secp256k1_curve_chip,
-            bls12_381_curve_chip,
             base64_chip,
             parser_gadget,
             vector_gadget,
@@ -314,19 +300,7 @@ impl ZkStdLib {
             } else {
                 0
             },
-            if arch.bls12_381 {
-                max(
-                    nb_field_chip_columns::<F, midnight_curves::Fp, MEP>(),
-                    nb_foreign_ecc_chip_columns::<
-                        F,
-                        midnight_curves::G1Projective,
-                        MEP,
-                        midnight_curves::Fp,
-                    >(),
-                )
-            } else {
-                0
-            },
+
             if arch.base64 {
                 NB_BASE64_ADVICE_COLS
             } else {
@@ -425,14 +399,6 @@ impl ZkStdLib {
             false => None,
         };
 
-        let bls12_381_config = match arch.bls12_381 {
-            true => {
-                let base_config = Bls12381BaseChip::configure(meta, &advice_columns);
-                Some(Bls12381Chip::configure(meta, &base_config, &advice_columns))
-            }
-            false => None,
-        };
-
         let base64_config = match arch.base64 {
             true => Some(Base64Chip::configure(
                 meta,
@@ -465,7 +431,6 @@ impl ZkStdLib {
             poseidon_config,
             secp256k1_scalar_config,
             secp256k1_config,
-            bls12_381_config,
             base64_config,
             automaton_config,
         }
@@ -499,16 +464,6 @@ impl ZkStdLib {
         self.secp256k1_curve_chip
             .as_ref()
             .unwrap_or_else(|| panic!("ZkStdArch must enable secp256k1"))
-    }
-
-    /// Chip for performing in-circuit operations over the BLS12-381 curve.
-    /// Note that this is the whole BLS curve (whose order is a 381-bits
-    /// integer). If you need to work over the BLS subgroup, you may want to
-    /// use [Bls12381Chip::assert_in_bls12_381_subgroup].
-    pub fn bls12_381_curve(&self) -> &Bls12381Chip {
-        self.bls12_381_curve_chip
-            .as_ref()
-            .unwrap_or_else(|| panic!("ZkStdArch must enable bls12_381"))
     }
 
     /// Chip for performing in-circuit base64 decoding.
@@ -662,26 +617,6 @@ impl ZkStdLib {
     }
 }
 
-impl Bls12381Chip {
-    /// Asserts that the given point belongs to the BLS subgroup.
-    pub fn assert_in_bls12_381_subgroup(
-        &self,
-        layouter: &mut impl Layouter<F>,
-        p: &<Bls12381Chip as EccInstructions<F, G1Projective>>::Point,
-    ) -> Result<(), Error> {
-        // We exhibit a COFACTOR "root" (an element that, multiplied by the cofactor
-        // results in p). This is more efficient that powering `p` to the subgroup order
-        // and checking it results in the identity.
-        let cofactor = F::from_raw([0x8c00aaab0000aaab, 0x396c8c005555e156, 0, 0]);
-        let cofactor_root: <Bls12381Chip as EccInstructions<F, G1Projective>>::Point =
-            self.assign(layouter, p.value().map(|p| p * cofactor.invert().unwrap()))?;
-
-        let cofactor_root_times_cofactor =
-            self.mul_by_constant(layouter, cofactor, &cofactor_root)?;
-
-        self.assert_equal(layouter, p, &cofactor_root_times_cofactor)
-    }
-}
 
 impl<T> AssignmentInstructions<F, T> for ZkStdLib
 where
@@ -1128,7 +1063,7 @@ impl<'a, R: Relation> MidnightCircuit<'a, R> {
 pub struct MidnightVK {
     architecture: ZkStdLibArch,
     nb_public_inputs: usize,
-    vk: VerifyingKey<midnight_curves::Fq, KZGCommitmentScheme<halo2curves::bn256::Bn256>>,
+    vk: VerifyingKey<halo2curves::bn256::Fr, KZGCommitmentScheme<halo2curves::bn256::Bn256>>,
 }
 
 impl MidnightVK {
@@ -1183,7 +1118,7 @@ impl MidnightVK {
     /// The underlying midnight-proofs verifying key.
     pub fn vk(
         &self,
-    ) -> &VerifyingKey<midnight_curves::Fq, KZGCommitmentScheme<halo2curves::bn256::Bn256>> {
+    ) -> &VerifyingKey<halo2curves::bn256::Fr, KZGCommitmentScheme<halo2curves::bn256::Bn256>> {
         &self.vk
     }
 }
@@ -1193,7 +1128,7 @@ impl MidnightVK {
 pub struct MidnightPK<R: Relation> {
     k: u8,
     relation: R,
-    pk: ProvingKey<midnight_curves::Fq, KZGCommitmentScheme<halo2curves::bn256::Bn256>>,
+    pk: ProvingKey<halo2curves::bn256::Fr, KZGCommitmentScheme<halo2curves::bn256::Bn256>>,
 }
 
 impl<Rel: Relation> MidnightPK<Rel> {
@@ -1245,7 +1180,7 @@ impl<Rel: Relation> MidnightPK<Rel> {
     /// The underlying midnight-proofs proving key.
     pub fn pk(
         &self,
-    ) -> &ProvingKey<midnight_curves::Fq, KZGCommitmentScheme<halo2curves::bn256::Bn256>> {
+    ) -> &ProvingKey<halo2curves::bn256::Fr, KZGCommitmentScheme<halo2curves::bn256::Bn256>> {
         &self.pk
     }
 }
@@ -1536,7 +1471,7 @@ where
         witness: Value::known(witness),
         nb_public_inputs: Rc::new(RefCell::new(None)),
     };
-    BnPlonk::<MidnightCircuit<R>>::prove::<H>(
+    BnPLONK::<MidnightCircuit<R>>::prove::<H>(
         params,
         &pk.pk,
         &circuit,
@@ -1564,7 +1499,7 @@ where
     if pi.len() != vk.nb_public_inputs {
         return Err(Error::InvalidInstances);
     }
-    BnPlonk::<MidnightCircuit<R>>::verify::<H>(
+    BnPLONK::<MidnightCircuit<R>>::verify::<H>(
         params_verifier,
         &vk.vk,
         &[committed_pi],
@@ -1610,12 +1545,12 @@ where
 
             let mut transcript = CircuitTranscript::init_from_bytes(proof);
             let dual_msm = prepare::<
-                midnight_curves::Fq,
+                halo2curves::bn256::Fr,
                 KZGCommitmentScheme<halo2curves::bn256::Bn256>,
                 CircuitTranscript<H>,
             >(
                 &vk.vk,
-                &[&[midnight_curves::G1Projective::identity()]],
+                &[&[G1Projective::identity()]],
                 // TODO: We could batch here proofs with the same vk.
                 &[&[pi]],
                 &mut transcript,

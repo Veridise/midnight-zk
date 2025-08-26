@@ -246,19 +246,15 @@ impl Relation for BitcoinThresholdECDSA {
 }
 
 fn main() {
-    let srs = if K <= 19 {
-        filecoin_srs(K)
-    } else {
-        ParamsKZG::unsafe_setup(K, OsRng)
-    };
+    let srs = ParamsKZG::unsafe_setup(K, OsRng);
 
     let relation = BitcoinThresholdECDSA;
 
-    use midnight_circuits::compact_std_lib::cost_model;
+    use midnight_circuits::compact_std_lib_bn::cost_model;
     println!("Cost model: {:?}", cost_model(&relation));
 
-    let vk = compact_std_lib::setup_vk(&srs, &relation);
-    let pk = compact_std_lib::setup_pk(&relation, &vk);
+    let vk = compact_std_lib_bn::setup_vk(&srs, &relation);
+    let pk = compact_std_lib_bn::setup_pk(&relation, &vk);
 
     // Generate a random instance-witness pair.
     let mut rng = ChaCha8Rng::seed_from_u64(0xba5eba11);
@@ -295,7 +291,7 @@ fn main() {
     );
 
     let now = Instant::now();
-    let proof = compact_std_lib::prove::<BitcoinThresholdECDSA, blake2b_simd::State>(
+    let proof = compact_std_lib_bn::prove::<BitcoinThresholdECDSA, blake2b_simd::State>(
         &srs, &pk, &relation, &instance, witness, OsRng,
     )
     .expect("Proof generation should not fail");
@@ -304,7 +300,7 @@ fn main() {
     for _ in 0..5 {
         let now = Instant::now();
         assert!(
-            compact_std_lib::verify::<BitcoinThresholdECDSA, blake2b_simd::State>(
+            compact_std_lib_bn::verify::<BitcoinThresholdECDSA, blake2b_simd::State>(
                 &srs.verifier_params(),
                 &vk,
                 &instance,
