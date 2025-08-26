@@ -36,3 +36,4 @@ pub trait PoseidonField: PrimeField {
 }
 
 mod blstrs;
+mod bn;

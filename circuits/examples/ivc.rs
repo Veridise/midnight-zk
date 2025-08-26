@@ -28,7 +28,7 @@ use midnight_circuits::{
     testing_utils::plonk_api::filecoin_srs,
     types::{AssignedNative, ComposableChip, Instantiable},
     verifier::{
-        self, Accumulator, AssignedAccumulator, AssignedVk, BlstrsEmulation, Msm, SelfEmulation,
+        self, Accumulator, AssignedAccumulator, AssignedVk, Msm, SelfEmulation,
         VerifierGadget,
     },
 };
@@ -40,7 +40,7 @@ use midnight_proofs::{
 };
 use rand::rngs::OsRng;
 
-type S = BlstrsEmulation;
+type S = BnEmulation;
 
 type F = <S as SelfEmulation>::F;
 type C = <S as SelfEmulation>::C;
@@ -67,7 +67,7 @@ fn configure_ivc_circuit(
     ForeignEccConfig<C>,
     PoseidonConfig<F>,
 ) {
-    let nb_advice_cols = nb_foreign_ecc_chip_columns::<F, C, C, NG>();
+    let nb_advice_cols = NB_POSEIDON_ADVICE_COLS; //nb_foreign_ecc_chip_columns::<F, C, C, NG>();
     let nb_fixed_cols = NB_ARITH_COLS + 4;
 
     let advice_columns: Vec<_> = (0..nb_advice_cols).map(|_| meta.advice_column()).collect();
@@ -249,7 +249,9 @@ fn main() {
         prev_acc: Value::unknown(),
     };
 
-    let srs = filecoin_srs(self_k);
+    println!("Cost model: {:?}", from_circuit_to_circuit_model::<_, _, 48, 32>(Some(self_k), &default_ivc_circuit, 0));
+
+    let srs = ParamsKZG::unsafe_setup(self_k, OsRng);
 
     let start = Instant::now();
     let vk = keygen_vk_with_k(&srs, &default_ivc_circuit, self_k).unwrap();

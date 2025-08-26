@@ -199,6 +199,67 @@ impl<F: PoseidonField> TranscriptHash for PoseidonState<F> {
 }
 
 // /////////////////////////////////////////////////////////////
+// /// Implementation of Hashable for BN256 with Poseidon //
+// /////////////////////////////////////////////////////////////
+
+impl Hashable<PoseidonState<halo2curves::bn256::Fr>> for halo2curves::bn256::G1 {
+    fn to_input(&self) -> Vec<halo2curves::bn256::Fr> {
+        AssignedForeignPoint::<halo2curves::bn256::Fr, halo2curves::bn256::G1, MEP>::as_public_input(self)
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        <halo2curves::bn256::G1Affine as GroupEncoding>::to_bytes(&self.into())
+            .as_ref()
+            .to_vec()
+    }
+
+    fn read(buffer: &mut impl Read) -> io::Result<Self> {
+        let mut bytes = <halo2curves::bn256::G1Affine as GroupEncoding>::Repr::default();
+
+        buffer.read_exact(bytes.as_mut())?;
+
+        Option::from(halo2curves::bn256::G1Affine::from_bytes(&bytes))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    "Invalid BN256 point encoding in proof",
+                )
+            })
+            .map(|p: halo2curves::bn256::G1Affine| p.into())
+    }
+}
+
+impl Hashable<PoseidonState<halo2curves::bn256::Fr>> for halo2curves::bn256::Fr {
+    fn to_input(&self) -> Vec<halo2curves::bn256::Fr> {
+        vec![*self]
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+
+    fn read(buffer: &mut impl Read) -> io::Result<Self> {
+        let mut bytes = <Self as PrimeField>::Repr::default();
+
+        buffer.read_exact(bytes.as_mut())?;
+
+        Option::from(Self::from_repr(bytes)).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                "Invalid BN256 scalar encoding in proof",
+            )
+        })
+    }
+}
+
+impl Sampleable<PoseidonState<halo2curves::bn256::Fr>> for halo2curves::bn256::Fr {
+    fn sample(out: halo2curves::bn256::Fr) -> Self {
+        out
+    }
+}
+
+
+// /////////////////////////////////////////////////////////////
 // /// Implementation of Hashable for BLS12-381 with Poseidon //
 // /////////////////////////////////////////////////////////////
 

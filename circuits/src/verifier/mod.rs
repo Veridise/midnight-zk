@@ -43,7 +43,7 @@ mod verifier_gadget;
 
 pub use accumulator::{Accumulator, AssignedAccumulator};
 pub use msm::{AssignedMsm, Msm};
-pub use types::{BlstrsEmulation, SelfEmulation};
+pub use types::{BlstrsEmulation, BnEmulation, SelfEmulation};
 pub use verifier_gadget::VerifierGadget;
 
 type VerifyingKey<S> =
