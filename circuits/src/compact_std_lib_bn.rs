@@ -30,7 +30,7 @@ use std::{cell::RefCell, cmp::max, convert::TryInto, fmt::Debug, io, rc::Rc};
 use ff::{Field, PrimeField};
 use group::{prime::PrimeCurveAffine, Group};
 use halo2curves::secp256k1::{self, Secp256k1};
-use midnight_curves::{G1Affine, G1Projective};
+use halo2curves::bn256::{G1Affine, G1 as G1Projective};
 use midnight_proofs::{
     circuit::{Chip, Layouter, SimpleFloorPlanner, Value},
     dev::cost_model::{from_circuit_to_circuit_model, CircuitModel},
@@ -91,14 +91,14 @@ use crate::{
     types::{
         AssignedBit, AssignedByte, AssignedNative, AssignedNativePoint, InnerValue, Instantiable,
     },
-    utils::{BlstPLONK, ComposableChip},
+    utils::{BnPLONK, ComposableChip},
     vec::{vector_gadget::VectorGadget, AssignedVector, Vectorizable},
 };
 
 const SHA256_SIZE_IN_WORDS: usize = 8;
 const SHA256_SIZE_IN_BYTES: usize = 4 * SHA256_SIZE_IN_WORDS;
 
-type F = midnight_curves::Fq;
+type F = halo2curves::bn256::Fr;
 
 // Type aliases, for readability.
 type NG = NativeGadget<F, P2RDecompositionChip<F>, NativeChip<F>>;
@@ -236,12 +236,17 @@ impl ZkStdLib {
         let core_decomposition_chip =
             P2RDecompositionChip::new(&config.core_decomposition_config, &max_bit_len);
         let native_gadget = NativeGadget::new(core_decomposition_chip.clone(), native_chip.clone());
+        let jubjub_chip = (config.jubjub_config.as_ref())
+            .map(|jubjub_config| EccChip::new(jubjub_config, &native_gadget));
         let sha256_table11_chip = (config.table11_config.as_ref())
             .map(|table11_config| Table11Chip::construct(table11_config.clone()));
         let sha256_table16_chip = (config.table16_config.as_ref())
             .map(|table16_config| Table16Chip::construct(table16_config.clone()));
         let poseidon_gadget = (config.poseidon_config.as_ref())
             .map(|poseidon_config| PoseidonChip::new(poseidon_config, &native_chip));
+        let htc_gadget = (jubjub_chip.as_ref())
+            .zip(poseidon_gadget.as_ref())
+            .map(|(ecc_chip, poseidon_gadget)| HashToCurveGadget::new(poseidon_gadget, ecc_chip));
         let biguint_gadget = BigUintGadget::new(&native_gadget);
         let map_gadget = poseidon_gadget
             .as_ref()
@@ -267,10 +272,12 @@ impl ZkStdLib {
         Self {
             native_gadget,
             core_decomposition_chip,
+            jubjub_chip,
             sha256_table11_chip,
             sha256_table16_chip,
             poseidon_gadget,
             map_gadget,
+            htc_gadget,
             biguint_gadget,
             secp256k1_scalar_chip,
             secp256k1_curve_chip,
@@ -327,9 +334,9 @@ impl ZkStdLib {
             },
             NB_AUTOMATA_COLS,
         ]
-        .into_iter()
-        .max()
-        .unwrap_or(0);
+            .into_iter()
+            .max()
+            .unwrap_or(0);
 
         // dbg!(nb_advice_cols);
 
@@ -346,9 +353,9 @@ impl ZkStdLib {
                 None => 0,
             },
         ]
-        .into_iter()
-        .max()
-        .unwrap_or(0);
+            .into_iter()
+            .max()
+            .unwrap_or(0);
 
         let advice_columns = (0..nb_advice_cols)
             .map(|_| meta.advice_column())
@@ -1121,7 +1128,7 @@ impl<'a, R: Relation> MidnightCircuit<'a, R> {
 pub struct MidnightVK {
     architecture: ZkStdLibArch,
     nb_public_inputs: usize,
-    vk: VerifyingKey<midnight_curves::Fq, KZGCommitmentScheme<midnight_curves::Bls12>>,
+    vk: VerifyingKey<midnight_curves::Fq, KZGCommitmentScheme<halo2curves::bn256::Bn256>>,
 }
 
 impl MidnightVK {
@@ -1176,7 +1183,7 @@ impl MidnightVK {
     /// The underlying midnight-proofs verifying key.
     pub fn vk(
         &self,
-    ) -> &VerifyingKey<midnight_curves::Fq, KZGCommitmentScheme<midnight_curves::Bls12>> {
+    ) -> &VerifyingKey<midnight_curves::Fq, KZGCommitmentScheme<halo2curves::bn256::Bn256>> {
         &self.vk
     }
 }
@@ -1186,7 +1193,7 @@ impl MidnightVK {
 pub struct MidnightPK<R: Relation> {
     k: u8,
     relation: R,
-    pk: ProvingKey<midnight_curves::Fq, KZGCommitmentScheme<midnight_curves::Bls12>>,
+    pk: ProvingKey<midnight_curves::Fq, KZGCommitmentScheme<halo2curves::bn256::Bn256>>,
 }
 
 impl<Rel: Relation> MidnightPK<Rel> {
@@ -1238,7 +1245,7 @@ impl<Rel: Relation> MidnightPK<Rel> {
     /// The underlying midnight-proofs proving key.
     pub fn pk(
         &self,
-    ) -> &ProvingKey<midnight_curves::Fq, KZGCommitmentScheme<midnight_curves::Bls12>> {
+    ) -> &ProvingKey<midnight_curves::Fq, KZGCommitmentScheme<halo2curves::bn256::Bn256>> {
         &self.pk
     }
 }
@@ -1470,7 +1477,7 @@ impl<R: Relation> Circuit<F> for MidnightCircuit<'_, R> {
 /// computed automatically). This step does not need to be done if you know that
 /// the SRS already has the correct size.
 pub fn downsize_srs_for_relation<R: Relation>(
-    srs: &mut ParamsKZG<midnight_curves::Bls12>,
+    srs: &mut ParamsKZG<halo2curves::bn256::Bn256>,
     relation: &R,
 ) {
     srs.downsize_from_circuit(&MidnightCircuit::from_relation(relation))
@@ -1479,11 +1486,11 @@ pub fn downsize_srs_for_relation<R: Relation>(
 /// Generates a verifying key for a `MidnightCircuit<R>` circuit. Downsizes the
 /// parameters to match the size of the Relation.
 pub fn setup_vk<R: Relation>(
-    params: &ParamsKZG<midnight_curves::Bls12>,
+    params: &ParamsKZG<halo2curves::bn256::Bn256>,
     relation: &R,
 ) -> MidnightVK {
     let circuit = MidnightCircuit::from_relation(relation);
-    let vk = BlstPLONK::<MidnightCircuit<R>>::setup_vk(params, &circuit);
+    let vk = BnPLONK::<MidnightCircuit<R>>::setup_vk(params, &circuit);
 
     // During the call to [setup_vk] the circuit RefCell on public inputs has been
     // mutated with the correct value. The following [unwrap] is safe here.
@@ -1499,7 +1506,7 @@ pub fn setup_vk<R: Relation>(
 /// Generates a proving key for a `MidnightCircuit<R>` circuit.
 pub fn setup_pk<R: Relation>(relation: &R, vk: &MidnightVK) -> MidnightPK<R> {
     let circuit = MidnightCircuit::from_relation(relation);
-    let pk = BlstPLONK::<MidnightCircuit<R>>::setup_pk(&circuit, &vk.vk);
+    let pk = BnPLONK::<MidnightCircuit<R>>::setup_pk(&circuit, &vk.vk);
     MidnightPK {
         k: vk.vk.get_domain().k() as u8,
         relation: relation.clone(),
@@ -1510,7 +1517,7 @@ pub fn setup_pk<R: Relation>(relation: &R, vk: &MidnightVK) -> MidnightPK<R> {
 /// Produces a proof of relation `R` for the given instance (using the given
 /// proving key and witness).
 pub fn prove<R: Relation, H: TranscriptHash>(
-    params: &ParamsKZG<midnight_curves::Bls12>,
+    params: &ParamsKZG<halo2curves::bn256::Bn256>,
     pk: &MidnightPK<R>,
     relation: &R,
     instance: &R::Instance,
@@ -1529,7 +1536,7 @@ where
         witness: Value::known(witness),
         nb_public_inputs: Rc::new(RefCell::new(None)),
     };
-    BlstPLONK::<MidnightCircuit<R>>::prove::<H>(
+    BnPlonk::<MidnightCircuit<R>>::prove::<H>(
         params,
         &pk.pk,
         &circuit,
@@ -1542,7 +1549,7 @@ where
 /// Verifies the given proof of relation `R` with respect to the given instance.
 /// Returns `Ok(())` if the proof is valid.
 pub fn verify<R: Relation, H: TranscriptHash>(
-    params_verifier: &ParamsVerifierKZG<midnight_curves::Bls12>,
+    params_verifier: &ParamsVerifierKZG<halo2curves::bn256::Bn256>,
     vk: &MidnightVK,
     instance: &R::Instance,
     committed_instance: Option<G1Affine>,
@@ -1557,7 +1564,7 @@ where
     if pi.len() != vk.nb_public_inputs {
         return Err(Error::InvalidInstances);
     }
-    BlstPLONK::<MidnightCircuit<R>>::verify::<H>(
+    BnPlonk::<MidnightCircuit<R>>::verify::<H>(
         params_verifier,
         &vk.vk,
         &[committed_pi],
@@ -1574,7 +1581,7 @@ where
 ///
 /// Returns `Ok(())` if all proofs are valid.
 pub fn batch_verify<H: TranscriptHash>(
-    params_verifier: &ParamsVerifierKZG<midnight_curves::Bls12>,
+    params_verifier: &ParamsVerifierKZG<halo2curves::bn256::Bn256>,
     vks: &[MidnightVK],
     pis: &[Vec<F>],
     proofs: &[Vec<u8>],
@@ -1604,7 +1611,7 @@ where
             let mut transcript = CircuitTranscript::init_from_bytes(proof);
             let dual_msm = prepare::<
                 midnight_curves::Fq,
-                KZGCommitmentScheme<midnight_curves::Bls12>,
+                KZGCommitmentScheme<halo2curves::bn256::Bn256>,
                 CircuitTranscript<H>,
             >(
                 &vk.vk,

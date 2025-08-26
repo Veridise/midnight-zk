@@ -23,6 +23,7 @@ extern crate core;
 extern crate serde_derive;
 
 pub mod compact_std_lib;
+pub mod compact_std_lib_bn;
 pub mod instructions;
 mod utils;
 
