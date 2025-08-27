@@ -53,8 +53,7 @@ use crate::{
     biguint::biguint_gadget::BigUintGadget,
     ecc::{
         foreign::{nb_foreign_ecc_chip_columns, ForeignEccChip, ForeignEccConfig},
-        hash_to_curve::HashToCurveGadget,
-        native::{EccChip, EccConfig, NB_EDWARDS_COLS},
+        native::NB_EDWARDS_COLS,
     },
     field::{
         decomposition::{
@@ -75,7 +74,7 @@ use crate::{
         },
     },
     instructions::{
-        hash_to_curve::HashToCurveInstructions, public_input::CommittedInstanceInstructions,
+        public_input::CommittedInstanceInstructions,
         ArithInstructions, AssertionInstructions, AssignmentInstructions, BinaryInstructions,
         BitwiseInstructions, CanonicityInstructions, ComparisonInstructions,
         ControlFlowInstructions, ConversionInstructions, DecompositionInstructions,
@@ -89,7 +88,7 @@ use crate::{
         Base64Chip, Base64Config, ParserGadget, StdLibParser, NB_BASE64_ADVICE_COLS,
     },
     types::{
-        AssignedBit, AssignedByte, AssignedNative, AssignedNativePoint, InnerValue, Instantiable,
+        AssignedBit, AssignedByte, AssignedNative, InnerValue, Instantiable,
     },
     utils::{BlstPLONK, ComposableChip},
     vec::{vector_gadget::VectorGadget, AssignedVector, Vectorizable},

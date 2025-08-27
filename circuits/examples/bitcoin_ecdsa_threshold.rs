@@ -256,6 +256,7 @@ fn main() {
 
     use midnight_circuits::compact_std_lib::cost_model;
     println!("Cost model: {:?}", cost_model(&relation));
+    println!("T: {T}");
 
     let vk = compact_std_lib::setup_vk(&srs, &relation);
     let pk = compact_std_lib::setup_pk(&relation, &vk);

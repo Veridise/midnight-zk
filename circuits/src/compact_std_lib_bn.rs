@@ -27,7 +27,7 @@
 
 use std::{cell::RefCell, cmp::max, convert::TryInto, fmt::Debug, io, rc::Rc};
 
-use ff::{Field, PrimeField};
+use ff::PrimeField;
 use group::{prime::PrimeCurveAffine, Group};
 use halo2curves::secp256k1::{self, Secp256k1};
 use halo2curves::bn256::{G1Affine, G1 as G1Projective};
@@ -53,8 +53,7 @@ use crate::{
     biguint::biguint_gadget::BigUintGadget,
     ecc::{
         foreign::{nb_foreign_ecc_chip_columns, ForeignEccChip, ForeignEccConfig},
-        hash_to_curve::HashToCurveGadget,
-        native::{EccChip, EccConfig, NB_EDWARDS_COLS},
+        native::NB_EDWARDS_COLS,
     },
     field::{
         decomposition::{
@@ -75,11 +74,11 @@ use crate::{
         },
     },
     instructions::{
-        hash_to_curve::HashToCurveInstructions, public_input::CommittedInstanceInstructions,
+        public_input::CommittedInstanceInstructions,
         ArithInstructions, AssertionInstructions, AssignmentInstructions, BinaryInstructions,
         BitwiseInstructions, CanonicityInstructions, ComparisonInstructions,
         ControlFlowInstructions, ConversionInstructions, DecompositionInstructions,
-        EccInstructions, EqualityInstructions, FieldInstructions, HashInstructions,
+        EqualityInstructions, FieldInstructions, HashInstructions,
         PublicInputInstructions, RangeCheckInstructions, VectorInstructions, ZeroInstructions,
     },
     map::map_gadget::MapGadget,
@@ -89,7 +88,7 @@ use crate::{
         Base64Chip, Base64Config, ParserGadget, StdLibParser, NB_BASE64_ADVICE_COLS,
     },
     types::{
-        AssignedBit, AssignedByte, AssignedNative, AssignedNativePoint, InnerValue, Instantiable,
+        AssignedBit, AssignedByte, AssignedNative, InnerValue, Instantiable,
     },
     utils::{BnPLONK, ComposableChip},
     vec::{vector_gadget::VectorGadget, AssignedVector, Vectorizable},

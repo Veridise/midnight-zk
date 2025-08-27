@@ -18,7 +18,6 @@ use midnight_circuits::{
     },
     testing_utils::{
         ecdsa::{ECDSASig, Ecdsa},
-        plonk_api::filecoin_srs,
     },
     types::{AssignedForeignPoint, InnerValue, Instantiable},
 };
@@ -252,6 +251,7 @@ fn main() {
 
     use midnight_circuits::compact_std_lib_bn::cost_model;
     println!("Cost model: {:?}", cost_model(&relation));
+    println!("T: {T:?}"); 
 
     let vk = compact_std_lib_bn::setup_vk(&srs, &relation);
     let pk = compact_std_lib_bn::setup_pk(&relation, &vk);
