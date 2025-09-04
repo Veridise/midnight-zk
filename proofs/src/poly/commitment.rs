@@ -1,6 +1,6 @@
 //! Trait for a commitment scheme
 use core::ops::{Add, Mul};
-use std::{fmt::Debug, hash::Hash};
+use std::{fmt::Debug, hash::Hash, ops::Sub};
 
 use ff::{FromUniformBytes, PrimeField};
 
@@ -29,10 +29,18 @@ pub trait PolynomialCommitmentScheme<F: PrimeField>: Clone + Debug {
         + Send
         + Sync
         + Add<Output = Self::Commitment>
+        // TODO: consider removing after debugging
+        + Sub<Output = Self::Commitment>
         + Mul<F, Output = Self::Commitment>;
 
     /// Verification guard. Allows for batch verification
     type VerificationGuard: Guard<F, Self>;
+
+    // TODO: remove after debugging
+    /// Return generator of G1 in case of pairing-based PCS
+    fn get_generator() -> Option<Self::Commitment> {
+        None
+    }
 
     /// Generates the parameters of the polynomial commitment scheme
     fn gen_params(k: u32) -> Self::Parameters;

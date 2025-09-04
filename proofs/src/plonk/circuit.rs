@@ -1615,6 +1615,8 @@ pub struct Gate<F: Field> {
     name: String,
     constraint_names: Vec<String>,
     polys: Vec<Expression<F>>,
+    // For keeping track of (fixed) column indices of simple selectors
+    simple_selector_index: Option<usize>,
     /// We track queried selectors separately from other cells, so that we can
     /// use them to trigger debug checks on gates.
     queried_selectors: Vec<Selector>,
@@ -1635,6 +1637,17 @@ impl<F: Field> Gate<F> {
     /// Returns constraints of this gate
     pub fn polynomials(&self) -> &[Expression<F>] {
         &self.polys
+    }
+
+    /// Returns index of fixed column corresponding to this selector if
+    /// it is (multiplicative and) simple, otherwise None
+    pub fn simple_selector_index(&self) -> Option<usize> {
+        self.simple_selector_index
+    }
+
+    /// Sets fixed column corresponding to simple selector
+    pub fn set_simple_selector_index(&mut self, idx: usize) {
+        self.simple_selector_index = Some(idx);
     }
 
     pub(crate) fn queried_selectors(&self) -> &[Selector] {
@@ -2042,6 +2055,19 @@ impl<F: Field> ConstraintSystem<F> {
             "Gates must contain at least one constraint."
         );
 
+        // Only keep track of selector indices of multiplicative simple selectors
+        let simple_selector_index = match constraints.selector {
+            SelectorType::Multiplicative(s) => {
+                if s.is_simple() {
+                    Some(s.index())
+                } else {
+                    None
+                }
+            }
+            SelectorType::Additive(_) => None,
+            SelectorType::None => None,
+        };
+
         let (constraint_names, polys): (_, Vec<_>) = cells
             .apply_selector_to_constraints(constraints)
             .into_iter()
@@ -2058,6 +2084,7 @@ impl<F: Field> ConstraintSystem<F> {
             name: name.into(),
             constraint_names,
             polys,
+            simple_selector_index,
             queried_selectors,
             queried_cells,
         });
@@ -2072,6 +2099,8 @@ impl<F: Field> ConstraintSystem<F> {
         // The number of provided selector assignments must be the number we
         // counted for this constraint system.
         assert_eq!(selectors.len(), self.num_selectors);
+
+        let nr_fixed_columns = self.num_fixed_columns();
 
         let (polys, selector_replacements): (Vec<_>, Vec<_>) = selectors
             .into_iter()
@@ -2098,6 +2127,15 @@ impl<F: Field> ConstraintSystem<F> {
 
         self.replace_selectors_with_fixed(&selector_replacements);
         self.num_selectors = 0;
+
+        // Adjust indices of (multiplicative) simple selectors: after converting selectors
+        // to fixed columns, `selector_index` should now contain the index of the corresponding
+        // fixed column
+        for gate in self.gates.iter_mut() {
+            if let Some(sel_idx) = gate.simple_selector_index() {
+                gate.set_simple_selector_index(sel_idx + nr_fixed_columns)
+            }
+        }
 
         (self, polys)
     }

@@ -1,11 +1,11 @@
 use std::{hash::Hash, iter};
 
-use ff::{FromUniformBytes, WithSmallOrderMulGroup};
+use ff::{FromUniformBytes, PrimeField, WithSmallOrderMulGroup};
 
 use super::{vanishing, Error, VerifyingKey};
 use crate::{
     plonk::traces::VerifierTrace,
-    poly::{commitment::PolynomialCommitmentScheme, VerifierQuery},
+    poly::{commitment::PolynomialCommitmentScheme, Rotation, VerifierQuery},
     transcript::{read_n, Hashable, Sampleable, Transcript},
     utils::arithmetic::compute_inner_product,
 };
@@ -44,7 +44,7 @@ where
         }
     }
 
-    // Check that instances matches the expected number of instance columns
+    // Check that total number of instances matches the expected number of instance columns
     for (committed_instances, instances) in committed_instances.iter().zip(instances.iter()) {
         if committed_instances.len() + instances.len() != vk.cs.num_instance_columns {
             return Err(Error::InvalidInstances);
@@ -71,8 +71,7 @@ where
         }
     }
 
-    // Obtain the prover's advice commitments from the proof, hash them into the transcript,
-    // and squeeze challenges
+    // Obtain the prover's advice commitments from the proof and squeeze challenges
     let (advice_commitments, challenges) = {
         let mut advice_commitments =
             vec![vec![CS::Commitment::default(); vk.cs.num_advice_columns]; num_proofs];
@@ -104,7 +103,7 @@ where
     // Sample theta challenge for batching lookup columns
     let theta: F = transcript.squeeze_challenge();
 
-    // Read commitments to permuted input and table columns from the transcript
+    // Lookup argument: Read commitments to permuted input and table columns from the transcript
     let lookup_permuted_commitments = (0..num_proofs)
         .map(|_| -> Result<Vec<_>, _> {
             // Read each lookup permuted commitment from the transcript
@@ -122,12 +121,12 @@ where
     // Sample gamma challenge for permutation argument
     let gamma: F = transcript.squeeze_challenge();
 
-    // Read commitments to product polynomial of permutation argument from the transcript
+    // Permutation argument: Read commitments to limbs of product polynomial from the transcript
     let permutation_product_commitments = (0..num_proofs)
         .map(|_| vk.cs.permutation.read_product_commitments(vk, transcript))
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Read commitments to product polynomial of lookup argument from the transcript
+    // Lookup argument: For each lookup, read commitments to product polynomial from the transcript
     let lookup_product_commitments = lookup_permuted_commitments
         .into_iter()
         .map(|lookups| {
@@ -218,7 +217,7 @@ where
         y,
     } = trace;
 
-    // Read commitments to limbs of the quotient polynomial h(X)/(X^n-1) from the transcript
+    // Read commitments to limbs of the quotient polynomial h(X) = nu(X)/(X^n-1) from the transcript
     let vanishing = vanishing.read_commitments_after_y(vk, transcript)?;
 
     // Sample evaluation challenge x
@@ -277,20 +276,23 @@ where
         .map(|_| -> Result<Vec<_>, _> { read_n(transcript, vk.cs.advice_queries.len()) })
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Read evals of all fixed polys from transcript (currently, fixed evals also include
+    // Read evals of all fixed polys from transcript (here, `fixed_evals` also includes
     // evals of simple selectors)
     let fixed_evals = read_n(transcript, vk.cs.fixed_queries.len())?;
 
+    // TODO: consider getting h limbs from Constructed struct above and remove this
     let vanishing = vanishing.evaluate_after_x(transcript)?;
 
+    // TODO: for constructing commitment to linearization polynomial
+    let h_limb_commitments = vanishing.h_limb_commitments();
     let permutations_common = vk.permutation.evaluate(transcript)?;
 
-    let permutations_evaluated = permutations
+    let permutation_evals = permutations
         .into_iter()
         .map(|permutation| permutation.evaluate(transcript))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let lookups_evaluated = lookups
+    let lookup_evals = lookups
         .into_iter()
         .map(|lookups| -> Result<Vec<_>, _> {
             lookups
@@ -300,7 +302,7 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let trashcans_evaluated = trashcans
+    let trashcan_evals = trashcans
         .into_iter()
         .map(|trashcans| -> Result<Vec<_>, _> {
             trashcans
@@ -310,112 +312,174 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Collect commitments belonging to simple selectors
-    let mut simple_selector_commitments = Vec::with_capacity(vk.cs.indices_simple_selectors.len());
-    for idx in &vk.cs.indices_simple_selectors {
-        simple_selector_commitments.push(&vk.fixed_commitments[*idx]);
+    fn construct_linearization_commitment<F: PrimeField, CS: PolynomialCommitmentScheme<F>>(
+        vk: &VerifyingKey<F, CS>,
+        expressions: Vec<(Option<usize>, F)>,
+        y: F,
+        xn: F,
+        h_limb_commitments: &[CS::Commitment],
+    ) -> CS::Commitment {
+        // Construct commitment of the linearization polynomial
+        // (which will be checked that it opens to 0 at x):
+        //
+        //  S_1*id_1(x) + y*S_2*id_2(x) + y^2*S_3*id_3(x) + ... + y^{k-1}*S_k*id_k(x)
+        //        - (h_0 + x^n*h_1 + x^{2n}*h_2 + ... + x^{l*n}*h_l) * (x^n-1),
+        //
+        // where:
+        // * S_i are the commitments to fixed columns corresponding to simple selectors
+        // * id_i are the partially evaluated individual identities,
+        // * h_j are the limbs of the quotient polynomial.
+
+        let g1 = CS::get_generator().unwrap();
+
+        // Construct commitment to linearized identities: LHS above
+        let mut acc = g1.clone() * F::ZERO;
+        for (idx, e) in expressions {
+            let value = match idx {
+                Some(column_index) => vk.fixed_commitments[column_index].clone() * e,
+                None => g1.clone() * e,
+            };
+            acc = acc * y + value;
+        }
+
+        // Construct commitment to linearized h polynomial: RHS above
+        // h_0 + x^n*h_1 + x^{2n}*h_2 + ... + x^{ln}*h_k,
+        // where h_i are commitments to the limbs of the quotient polynomial
+        let mut linearized_h = g1.clone() * F::ZERO;
+        for (i, piece) in h_limb_commitments.iter().enumerate() {
+            linearized_h = linearized_h + piece.clone() * xn.pow([i as u64]);
+        }
+        linearized_h = linearized_h * (xn - F::ONE);
+
+        acc - linearized_h
     }
 
-    // This check ensures the circuit is satisfied so long as the polynomial
-    // commitments open to the correct values.
-    let vanishing = {
-        // x^n
-        let xn = x.pow([vk.n()]);
+    // Partially evaluate batched identities
+    // (without fixed columns corresponding to simple selectors)
+    let xn = x.pow([vk.n()]);
+    let nr_blinding_factors = vk.cs.nr_blinding_factors();
+    let l_evals = vk
+        .domain
+        .l_i_range(x, xn, (-((nr_blinding_factors + 1) as i32))..=0);
+    assert_eq!(l_evals.len(), 2 + nr_blinding_factors);
+    let l_last = l_evals[0];
+    let l_blind: F = l_evals[1..(1 + nr_blinding_factors)]
+        .iter()
+        .fold(F::ZERO, |acc, eval| acc + eval);
+    let l_0 = l_evals[1 + nr_blinding_factors];
 
-        let nr_blinding_factors = vk.cs.nr_blinding_factors();
-        let l_evals = vk
-            .domain
-            .l_i_range(x, xn, (-((nr_blinding_factors + 1) as i32))..=0);
-        assert_eq!(l_evals.len(), 2 + nr_blinding_factors);
-        let l_last = l_evals[0];
-        let l_blind: F = l_evals[1..(1 + nr_blinding_factors)]
-            .iter()
-            .fold(F::ZERO, |acc, eval| acc + eval);
-        let l_0 = l_evals[1 + nr_blinding_factors];
-
-        // Compute the expected value of h(x)
-        let expressions = advice_evals
+    let mut evaluated_expressions = Vec::new();
+    for ((((advice_evals, instance_evals), permutation_evals), lookup_evals), trashcan_evals) in
+        advice_evals
             .iter()
             .zip(instance_evals.iter())
-            .zip(permutations_evaluated.iter())
-            .zip(lookups_evaluated.iter())
-            .zip(trashcans_evaluated.iter())
-            .flat_map(
-                |((((advice_evals, instance_evals), permutation), lookups), trash)| {
-                    let challenges = &challenges;
-                    let fixed_evals = &fixed_evals;
-                    iter::empty()
-                        // Evaluate the circuit using the custom gates provided
-                        .chain(vk.cs.gates.iter().flat_map(move |gate| {
-                            gate.polynomials().iter().map(move |poly| {
-                                poly.evaluate(
-                                    &|scalar| scalar,
-                                    &|_| {
-                                        panic!("virtual selectors are removed during optimization")
-                                    },
-                                    // TODO: change query here
-                                    &|query| fixed_evals[query.index.unwrap()],
-                                    &|query| advice_evals[query.index.unwrap()],
-                                    &|query| instance_evals[query.index.unwrap()],
-                                    &|challenge| challenges[challenge.index()],
-                                    &|a| -a,
-                                    &|a, b| a + &b,
-                                    &|a, b| a * &b,
-                                    &|a, scalar| a * &scalar,
-                                )
-                            })
-                        }))
-                        .chain(permutation.expressions(
-                            vk,
-                            &vk.cs.permutation,
-                            &permutations_common,
-                            advice_evals,
-                            fixed_evals,
-                            instance_evals,
-                            l_0,
-                            l_last,
-                            l_blind,
-                            beta,
-                            gamma,
-                            x,
-                        ))
-                        .chain(lookups.iter().zip(vk.cs.lookups.iter()).flat_map(
-                            move |(p, argument)| {
-                                p.expressions(
-                                    l_0,
-                                    l_last,
-                                    l_blind,
-                                    argument,
-                                    theta,
-                                    beta,
-                                    gamma,
-                                    advice_evals,
-                                    fixed_evals,
-                                    instance_evals,
-                                    challenges,
-                                )
-                            },
-                        ))
-                        .chain(trash.iter().zip(vk.cs.trashcans.iter()).flat_map(
-                            move |(p, argument)| {
-                                p.expressions(
-                                    argument,
-                                    trash_challenge,
-                                    advice_evals,
-                                    fixed_evals,
-                                    instance_evals,
-                                    challenges,
-                                )
-                            },
-                        ))
-                },
-            );
+            .zip(permutation_evals.iter())
+            .zip(lookup_evals.iter())
+            .zip(trashcan_evals.iter())
+    {
+        let challenges = &challenges;
+        let fixed_evals = &fixed_evals;
+        // (Partially) evaluate polys from (custom) gates
+        for (idx, e) in vk.cs.gates.iter().flat_map(move |gate| {
+            gate.polynomials().iter().map(move |poly| {
+                let evaluation = poly.evaluate(
+                    &|scalar| scalar,
+                    &|_| panic!("virtual selectors are removed during optimization"),
+                    // Partially evaluate all gate polys with simple selectors
+                    &|query| {
+                        if vk
+                            .cs
+                            .indices_simple_selectors
+                            // Here, we need the *column* index of the fixed column
+                            // corresponding to the simple selector
+                            .contains(&query.column_index())
+                        {
+                            F::ONE
+                        } else {
+                            fixed_evals[query.index.unwrap()]
+                        }
+                    },
+                    &|query| advice_evals[query.index.unwrap()],
+                    &|query| instance_evals[query.index.unwrap()],
+                    &|challenge| challenges[challenge.index()],
+                    &|a| -a,
+                    &|a, b| a + &b,
+                    &|a, b| a * &b,
+                    &|a, scalar| a * &scalar,
+                );
+                (gate.simple_selector_index(), evaluation)
+            })
+        }) {
+            evaluated_expressions.push((idx, e))
+        }
 
-        vanishing.verify(expressions, y, xn)
-    };
+        // Evaluate polys from permutation argument
+        for e in permutation_evals.expressions(
+            vk,
+            &vk.cs.permutation,
+            &permutations_common,
+            advice_evals,
+            fixed_evals,
+            instance_evals,
+            l_0,
+            l_last,
+            l_blind,
+            beta,
+            gamma,
+            x,
+        ) {
+            evaluated_expressions.push((None, e))
+        }
 
-    // TODO: we only need eval of h without fixed columns corresponding to selectors
-    let h_x = vanishing.expected_h_eval();
+        // Evaluate polys from lookup argument
+        for e in lookup_evals
+            .iter()
+            .zip(vk.cs.lookups.iter())
+            .flat_map(move |(p, argument)| {
+                p.expressions(
+                    l_0,
+                    l_last,
+                    l_blind,
+                    argument,
+                    theta,
+                    beta,
+                    gamma,
+                    advice_evals,
+                    fixed_evals,
+                    instance_evals,
+                    challenges,
+                )
+            })
+        {
+            evaluated_expressions.push((None, e))
+        }
+
+        // Evaluate polys from trashcan
+        for e in trashcan_evals
+            .iter()
+            .zip(vk.cs.trashcans.iter())
+            .flat_map(move |(p, argument)| {
+                p.expressions(
+                    argument,
+                    trash_challenge,
+                    advice_evals,
+                    fixed_evals,
+                    instance_evals,
+                    challenges,
+                )
+            })
+        {
+            evaluated_expressions.push((None, e))
+        }
+    }
+
+    let t = std::time::Instant::now();
+    let linearization_commitment =
+        construct_linearization_commitment(vk, evaluated_expressions, y, xn, h_limb_commitments);
+    println!(
+        "Linearization commitment built in {:?} ms",
+        format_args!("{:.1}", t.elapsed().as_secs_f32() * 1000.0)
+    );
 
     // Collect queries that are checked in multi-open argument: queries corresponding
     // to simple-selectors need not be checked
@@ -424,9 +488,9 @@ where
         .zip(instance_evals.iter())
         .zip(advice_commitments.iter())
         .zip(advice_evals.iter())
-        .zip(permutations_evaluated.iter())
-        .zip(lookups_evaluated.iter())
-        .zip(trashcans_evaluated.iter())
+        .zip(permutation_evals.iter())
+        .zip(lookup_evals.iter())
+        .zip(trashcan_evals.iter())
         .flat_map(
             |(
                 (
@@ -473,24 +537,27 @@ where
                 .enumerate()
                 // TODO: filter out queries for fixed columns corresponding to
                 // simple selectors
+                .filter(|(_, (col, _))| !vk.cs.indices_simple_selectors.contains(&col.index()))
                 .map(|(query_index, &(column, at))| {
                     VerifierQuery::new(
                         vk.domain.rotate_omega(x, at),
                         // fixed_commitments is sorted per column_index
                         &vk.fixed_commitments[column.index()],
-                        // fixed_evals is sorted according to fixed_queries
+                        // `fixed_evals` is indexed according to `fixed_queries`
                         fixed_evals[query_index],
                     )
                 }),
         )
         .chain(permutations_common.queries(&vk.permutation, x))
+        // TODO: add query for linearization poly
+        .chain(iter::once(VerifierQuery::new(
+            vk.domain.rotate_omega(x, Rotation::cur()),
+            &linearization_commitment,
+            F::ZERO,
+        )))
         .collect::<Vec<_>>();
-
-    // TODO: do checks with partial evaluations here
-    // TODO: reconstruct h_poly here and subtract other (batched) commitments here
-    // TODO: don't need random poly afterwards?! Saving commitment+eval in trace
-
-    // .chain(vanishing.queries(x, vk.n()));
+    // TODO: don't need random poly?! Saving commitment+eval in trace
+    // .chain(vanishing.queries(x, vk.n()))
 
     // We are now convinced the circuit is satisfied so long as the
     // polynomial commitments open to the correct values.

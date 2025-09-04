@@ -20,9 +20,8 @@ use crate::{
 pub(crate) struct Committed<F: PrimeField> {
     pub(crate) random_poly: Polynomial<F, Coeff>,
 }
-
 pub(crate) struct Constructed<F: PrimeField> {
-    h_pieces: Vec<Polynomial<F, Coeff>>,
+    pub(crate) h_pieces: Vec<Polynomial<F, Coeff>>,
     committed: Committed<F>,
 }
 
@@ -85,38 +84,39 @@ impl<F: WithSmallOrderMulGroup<3>> Committed<F> {
         self,
         params: &CS::Parameters,
         domain: &EvaluationDomain<F>,
-        h_poly: Polynomial<F, ExtendedLagrangeCoeff>,
+        nu_poly: Polynomial<F, ExtendedLagrangeCoeff>,
         transcript: &mut T,
     ) -> Result<Constructed<F>, Error>
     where
         CS::Commitment: Hashable<T::Hash>,
         F: Hashable<T::Hash>,
     {
-        // Divide by t(X) = X^{params.n} - 1.
-        let h_poly = domain.divide_by_vanishing_poly(h_poly);
+        // Construct quotient polynomial h(X): divide nu(X) by t(X) = X^{params.n} - 1
+        let h_poly = domain.divide_by_vanishing_poly(nu_poly);
 
-        // Obtain final h(X) polynomial
+        // Obtain final quotient polynomial h(X) in coefficient form
         let mut h_poly = domain.extended_to_coeff(h_poly);
 
-        // Truncate it to match the size of the quotient polynomial; the
-        // evaluation domain might be slightly larger than necessary because
-        // it always lies on a power-of-two boundary.
+        // Truncate coefficient vector of h(X) to match the size of the quotient polynomial;
+        // the evaluation domain might be slightly larger than necessary because it always lies
+        // on a power-of-two boundary
         h_poly.truncate(domain.n as usize * domain.get_quotient_poly_degree());
 
-        // Split h(X) up into pieces
+        // Split h(X) up into pieces h_i(X) of size n (i.e., deg(h_i)<=n-1);
+        // h(X) = h_0(X) + X^n*h_1(X) + X^{2n}*h_2(X) + ... + X^{ln}*h_l(X)
         let h_pieces = h_poly
             .chunks_exact(domain.n as usize)
             .map(|v| domain.coeff_from_vec(v.to_vec()))
             .collect::<Vec<_>>();
         drop(h_poly);
 
-        // Compute commitments to each h(X) piece
+        // Compute commitments to each h_i(X) limb
         let h_commitments: Vec<_> = h_pieces
             .iter()
             .map(|h_piece| CS::commit(params, h_piece))
             .collect();
 
-        // Hash commitments to the limbs of h(X)
+        // Write limb commitments to the transcript
         for c in h_commitments {
             transcript.write(&c)?;
         }

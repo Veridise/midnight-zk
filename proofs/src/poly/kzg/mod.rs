@@ -63,6 +63,11 @@ where
     type Commitment = E::G1;
     type VerificationGuard = DualMSM<E>;
 
+    // TODO: remove after debugging
+    fn get_generator() -> Option<Self::Commitment> {
+        Some(E::G1::generator())
+    }
+
     fn gen_params(k: u32) -> Self::Parameters {
         ParamsKZG::unsafe_setup(k, OsRng)
     }

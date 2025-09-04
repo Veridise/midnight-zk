@@ -285,9 +285,9 @@ impl<F: WithSmallOrderMulGroup<3>> Evaluator<F> {
         ev
     }
 
-    /// Evaluate h poly
+    /// Evaluate numerator polynomial `nu(X)` of quotient `h(X)=nu(X)/(X^n-1)`
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn evaluate_h<B: PolynomialRepresentation>(
+    pub(crate) fn evaluate_numerator<B: PolynomialRepresentation>(
         &self,
         domain: &EvaluationDomain<F>,
         cs: &ConstraintSystem<F>,
@@ -327,7 +327,7 @@ impl<F: WithSmallOrderMulGroup<3>> Evaluator<F> {
             .zip(trashcans.iter())
             .zip(permutations.iter())
         {
-            // Custom gates
+            // Evalaute polys from custom gates
             rayon::scope(|scope| {
                 let chunk_size = size.div_ceil(num_threads);
                 for (thread_idx, values) in values.chunks_mut(chunk_size).enumerate() {
@@ -357,7 +357,7 @@ impl<F: WithSmallOrderMulGroup<3>> Evaluator<F> {
                 }
             });
 
-            // Permutations
+            // Evaluate polys from permutation argument
             let sets = &permutation.sets;
             if !sets.is_empty() {
                 let nr_blinding_factors = cs.nr_blinding_factors();
@@ -445,7 +445,7 @@ impl<F: WithSmallOrderMulGroup<3>> Evaluator<F> {
                 });
             }
 
-            // Lookups
+            // Evaluate polys from lookup argument
             for (n, lookup) in lookups.iter().enumerate() {
                 // Polynomials required for this lookup.
                 // Calculated here so these only have to be kept in memory for the short time
@@ -518,7 +518,7 @@ impl<F: WithSmallOrderMulGroup<3>> Evaluator<F> {
                 });
             }
 
-            // Trashcans
+            // Evaluate polys from trashcans
             for (n, trash) in trashcans.iter().enumerate() {
                 // Polynomials required for this trash argument.
                 // Calculated here so these only have to be kept in memory for the short time

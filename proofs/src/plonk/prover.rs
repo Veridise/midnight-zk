@@ -20,10 +20,11 @@ use super::{
 use crate::poly::EvaluationDomain;
 use crate::{
     circuit::Value,
-    plonk::{traces::ProverTrace, trash},
+    plonk::{self, traces::ProverTrace, trash},
     poly::{
         batch_invert_rational, commitment::PolynomialCommitmentScheme, Coeff,
         ExtendedLagrangeCoeff, LagrangeCoeff, Polynomial, PolynomialRepresentation, ProverQuery,
+        Rotation,
     },
     transcript::{Hashable, Sampleable, Transcript},
     utils::{arithmetic::eval_polynomial, rational::Rational},
@@ -114,6 +115,7 @@ where
         pub instance_polys: Vec<Polynomial<F, Coeff>>,
     }
 
+    // For each proof, wrap instance columns
     let instance: Vec<InstanceSingle<F>> = instances
         .iter()
         .map(|instance| -> Result<InstanceSingle<F>, Error> {
@@ -312,6 +314,7 @@ where
         }
     }
 
+    // Obtain and commit to advice columns
     let (advice, challenges) = {
         let mut advice = vec![
             AdviceSingle::<F, LagrangeCoeff> {
@@ -395,6 +398,7 @@ where
                     .map(|poly| CS::commit_lagrange(params, poly))
                     .collect();
 
+                // Write advice commitments to the transcript
                 for commitment in &advice_commitments {
                     transcript.write(commitment)?;
                 }
@@ -419,9 +423,10 @@ where
         (advice, challenges)
     };
 
-    // Sample theta challenge for keeping lookup columns linearly independent
+    // Sample theta challenge for batching independent lookup columns
     let theta: F = transcript.squeeze_challenge();
 
+    // Lookup argument: For each lookup, construct and commit to permuted advice and table columns
     let lookups: Vec<Vec<lookup::prover::Permuted<F>>> = instance
         .iter()
         .zip(advice.iter())
@@ -449,13 +454,13 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Sample beta challenge
+    // Sample beta challenge for permutation argument
     let beta: F = transcript.squeeze_challenge();
 
-    // Sample gamma challenge
+    // Sample gamma challenge for permutation argument
     let gamma: F = transcript.squeeze_challenge();
 
-    // Commit to permutations.
+    // Permutation argument: Construct and commit to limbs of product polynomial
     let permutations: Vec<permutation::prover::Committed<F>> = instance
         .iter()
         .zip(advice.iter())
@@ -475,6 +480,7 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
+    // Lookup argument: For each lookup, construct and commit to product polynomial
     let lookups: Vec<Vec<lookup::prover::Committed<F>>> = lookups
         .into_iter()
         .map(|lookups| -> Result<Vec<_>, _> {
@@ -486,7 +492,7 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Trash argument
+    // Challenge for trash argument
     let trash_challenge: F = transcript.squeeze_challenge();
 
     let trashcans: Vec<Vec<trash::prover::Committed<F>>> = instance
@@ -615,8 +621,9 @@ where
         })
         .collect();
 
-    // Evaluate the polynomial h(X) (which is the numerator of the quotient polynomial)
-    let h_poly = pk.ev.evaluate_h::<ExtendedLagrangeCoeff>(
+    // Evaluate the numerator polynomial nu(X) of the quotient polynomial h(X)=nu(X)/(X^n-1):
+    // nu(X) is a random linear/parametric combination of all independent identities
+    let nu_poly = pk.ev.evaluate_numerator::<ExtendedLagrangeCoeff>(
         &pk.vk.domain,
         &pk.vk.cs,
         &advice_cosets
@@ -644,29 +651,39 @@ where
     );
 
     // Advice and instance cosets are no longer required and are dropped to reduce
-    // memory usage.
+    // memory usage
     drop(advice_cosets);
     drop(instance_cosets);
 
-    // Construct the vanishing argument's commitments: the (batched) quotient polynomial
-    // h(X)/(X^n-1) is split into limbs, and each limb is committed separately and written
-    // to the transcript
+    // Construct the quotient polynomial h(X)=nu(X)/(X^n-1), split it into limbs of size n, commit to each limb separately, and write limb commitments to the transcript
     let vanishing =
-        vanishing.construct::<CS, T>(params, pk.get_vk().get_domain(), h_poly, transcript)?;
+        vanishing.construct::<CS, T>(params, pk.get_vk().get_domain(), nu_poly, transcript)?;
 
     // Sample evaluation challenge x
     let x: F = transcript.squeeze_challenge();
 
+    let mut instance_evals_combined = Vec::new(); // Done
+    let mut advice_evals_combined = Vec::new(); // Done
+    let mut permutation_evals_combined = Vec::new();
+    let mut lookup_evals_combined = Vec::new(); // Done
+    let mut trashcan_evals_combined = Vec::new(); // Done
+
     // Compute and hash evals for the polynomials of the committed instances of
     // each circuit
     for instance in instance_polys.iter() {
+        let mut instance_evals = Vec::new();
         // Evaluate polynomials at omega^i x
         for &(column, at) in meta.instance_queries.iter() {
             if column.index() < nb_committed_instances {
                 let eval = eval_polynomial(&instance[column.index()], domain.rotate_omega(x, at));
+                instance_evals.push(eval);
                 transcript.write(&eval)?;
+            } else {
+                let eval = eval_polynomial(&instance[column.index()], domain.rotate_omega(x, at));
+                instance_evals.push(eval);
             }
         }
+        instance_evals_combined.push(instance_evals);
     }
 
     // Compute and hash advice evals for each circuit instance
@@ -676,9 +693,12 @@ where
             .advice_queries
             .iter()
             .map(|&(column, at)| {
-                eval_polynomial(&advice[column.index()], domain.rotate_omega(x, at))
+                let eval = eval_polynomial(&advice[column.index()], domain.rotate_omega(x, at));
+                eval
             })
             .collect();
+
+        advice_evals_combined.push(advice_evals.clone());
 
         // Hash each advice column evaluation
         for eval in advice_evals.iter() {
@@ -686,10 +706,10 @@ where
         }
     }
 
-    // Compute and hash fixed evals (shared across all circuit instances)
-    // fixed_evals is sorted according to fixed_queries (which is NOT sorted
+    // Compute and hash evaluations of fixed columns (shared across all circuit instances)
+    // `fixed_evals` is indexed according to `fixed_queries` (which is NOT indexed
     // per column index, but in the order in which queries were added)
-    let fixed_evals: Vec<_> = meta
+    let fixed_evals: Vec<F> = meta
         .fixed_queries
         .iter()
         // .filter(|(column, _)| !meta.indices_simple_selectors.contains(&column.index()))
@@ -703,38 +723,245 @@ where
         transcript.write(eval)?;
     }
 
+    let quotient_limbs = vanishing.h_pieces.clone();
     let vanishing = vanishing.evaluate(x, domain, transcript)?;
 
     // Evaluate common permutation data
-    pk.permutation.evaluate(x, transcript)?;
+    let permutations_common = pk.permutation.evaluate(x, transcript)?;
 
     // Evaluate the permutations, if any, at omega^i x.
-    let permutations: Vec<permutation::prover::Evaluated<F>> = permutations
+    let permutations = permutations
         .into_iter()
-        .map(|permutation| -> Result<_, _> { permutation.evaluate(pk, x, transcript) })
+        .map(|permutation| -> Result<_, _> {
+            permutation.evaluate(pk, x, transcript, &mut permutation_evals_combined)
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
     // Evaluate the lookups, if any, at omega^i x.
     let lookups: Vec<Vec<lookup::prover::Evaluated<F>>> = lookups
         .into_iter()
         .map(|lookups| -> Result<Vec<_>, _> {
-            lookups
+            let mut lookup_evals =
+                Vec::<crate::plonk::lookup::prover::PartiallyEvaluated<F>>::new();
+            let c = lookups
                 .into_iter()
-                .map(|p| p.evaluate(pk, x, transcript))
-                .collect::<Result<Vec<_>, _>>()
+                .map(|p| p.evaluate(pk, x, transcript, &mut lookup_evals))
+                .collect::<Result<Vec<_>, _>>();
+            lookup_evals_combined.push(lookup_evals);
+            c
         })
         .collect::<Result<Vec<_>, _>>()?;
 
     // Evaluate the trashcans, if any, at x.
-    let trashcans: Vec<Vec<trash::prover::Evaluated<F>>> = trashcans
+    let trashcans = trashcans
         .into_iter()
         .map(|trash| -> Result<Vec<_>, _> {
-            trash
+            let mut trashcan_evals =
+                Vec::<crate::plonk::trash::prover::PartiallyEvaluated<F>>::new();
+            let t = trash
                 .into_iter()
-                .map(|p| p.evaluate(x, transcript))
-                .collect::<Result<Vec<_>, _>>()
+                .map(|p| p.evaluate(x, transcript, &mut trashcan_evals))
+                .collect::<Result<Vec<_>, _>>();
+            trashcan_evals_combined.push(trashcan_evals);
+            t
         })
         .collect::<Result<Vec<_>, _>>()?;
+
+    // Construct linearization polynomial
+    let xn = x.pow([pk.vk.n()]);
+    let nr_blinding_factors = pk.vk.cs.nr_blinding_factors();
+    let l_evals = pk
+        .vk
+        .domain
+        .l_i_range(x, xn, (-((nr_blinding_factors + 1) as i32))..=0);
+    assert_eq!(l_evals.len(), 2 + nr_blinding_factors);
+    let l_last = l_evals[0];
+    let l_blind: F = l_evals[1..(1 + nr_blinding_factors)]
+        .iter()
+        .fold(F::ZERO, |acc, eval| acc + eval);
+    let l_0 = l_evals[1 + nr_blinding_factors];
+
+    fn construct_linearization_poly<F: PrimeField, CS: PolynomialCommitmentScheme<F>>(
+        evaluated_expressions: Vec<(Option<usize>, F)>,
+        pk: &plonk::ProvingKey<F, CS>,
+        y: F,
+        x: F,
+        xn: F,
+        quotient_limbs: Vec<Polynomial<F, Coeff>>,
+    ) -> Polynomial<F, Coeff> {
+        // Construct the linearization polynomial:
+        //
+        //  S_1(X)*id_1(x) + y*S_2(X)*id_2(x) + y^2*S_3(X)*id_3(x) + ... + y^{k-1}*S_k(X)*id_k(x)
+        //        - (h_0(X) + x^n*h_1(X) + x^{2n}*h_2(X) + ... + x^{l*n}*h_l(X)) * (x^n-1)
+        //
+        // where:
+        // * S_i(X) are gate selector polys (possibly 1, if no gate selector exists)
+        // * id_i(X) are the partially evaluated individual identities,
+        // * h_j(X) are the limbs of the quotient polynomial.
+        //
+
+        // Construct linearized identities: LHS above
+        // Initialize accumulator with zero polynomial
+        let mut acc = vec![F::ZERO; pk.vk.domain.n as usize];
+        for (column_idx, partial_eval) in evaluated_expressions {
+            let poly = match column_idx {
+                Some(column_index) => {
+                    // Multiply fixed column corresponding to simple selector with partial evaluation of gate
+                    // Note: `fixed_polys` of proving key are polynomials in coefficient form
+                    let mut fixed_poly = pk.fixed_polys[column_index].clone();
+                    for coeff in fixed_poly.values.iter_mut() {
+                        *coeff *= partial_eval;
+                    }
+                    fixed_poly.values
+                }
+                None => {
+                    // Return constant poly with constant term equal to fully evaluated gate
+                    let mut constant_poly = vec![F::ZERO; pk.vk.domain.n as usize];
+                    constant_poly[0] = partial_eval;
+                    constant_poly
+                }
+            };
+            // Multiply current state of accumulator
+            // with batching challenge and add new poly
+            for (ac, pc) in acc.iter_mut().zip(poly) {
+                *ac = *ac * y + pc;
+            }
+        }
+        let vanishing_eval = xn - F::ONE;
+        // Construct linearized numerator poly: RHS above
+        // (h_0(X) + x^n*h_1(X) + x^{2n}*h_2(X) + ... + x^{ln}*h_k(X)) * (x^n-1),
+        // where h_i are commitments to the limbs of the quotient polynomial
+        let mut linearized_h = vec![F::ZERO; pk.vk.domain.n as usize];
+        for (i, piece) in quotient_limbs.into_iter().enumerate() {
+            for (curr_coeff, new_coeff) in linearized_h.iter_mut().zip(piece.values) {
+                *curr_coeff += (new_coeff * xn.pow([i as u64])) * vanishing_eval;
+            }
+        }
+        for (lhs_coeff, rhs_coeff) in acc.iter_mut().zip(linearized_h) {
+            *lhs_coeff -= rhs_coeff;
+        }
+        let linearization_poly = Polynomial {
+            values: acc,
+            _marker: std::marker::PhantomData::<Coeff>,
+        };
+        assert_eq!(eval_polynomial(&linearization_poly, x), F::ZERO);
+        linearization_poly
+    }
+
+    let mut evaluated_expressions = Vec::new();
+    for ((((advice_evals, instance_evals), permutation_evals), lookup_evals), trashcan_evals) in
+        advice_evals_combined
+            .iter()
+            .zip(instance_evals_combined.iter())
+            .zip(permutation_evals_combined.iter())
+            .zip(lookup_evals_combined.iter())
+            .zip(trashcan_evals_combined.iter())
+    {
+        let challenges = &challenges;
+        let fixed_evals = &fixed_evals;
+        // (Partially) evaluate polys from (custom) gates
+        for (idx, e) in pk.vk.cs.gates.iter().flat_map(move |gate| {
+            gate.polynomials().iter().map(move |poly| {
+                let evaluation = poly.evaluate(
+                    &|scalar| scalar,
+                    &|_| panic!("virtual selectors are removed during optimization"),
+                    // Partially evaluate all gate polys with simple selectors
+                    &|query| {
+                        if pk
+                            .vk
+                            .cs
+                            .indices_simple_selectors
+                            // Here, we need the column index of the fixed column corresponding to the simple selector
+                            .contains(&query.column_index())
+                        {
+                            F::ONE
+                            // TODO: for debugging, don't do anything
+                            // fixed_evals[query.index.unwrap()]
+                        } else {
+                            fixed_evals[query.index.unwrap()]
+                        }
+                    },
+                    &|query| advice_evals[query.index.unwrap()],
+                    &|query| instance_evals[query.index.unwrap()],
+                    &|challenge| challenges[challenge.index()],
+                    &|a| -a,
+                    &|a, b| a + &b,
+                    &|a, b| a * &b,
+                    &|a, scalar| a * &scalar,
+                );
+                (gate.simple_selector_index(), evaluation)
+            })
+        }) {
+            evaluated_expressions.push((idx, e))
+        }
+
+        // Evaluate polys from permutation argument
+        for e in permutation_evals.expressions(
+            &pk.vk,
+            &pk.vk.cs.permutation,
+            &permutations_common,
+            advice_evals,
+            fixed_evals,
+            instance_evals,
+            l_0,
+            l_last,
+            l_blind,
+            beta,
+            gamma,
+            x,
+        ) {
+            evaluated_expressions.push((None, e))
+        }
+
+        // Evaluate polys from lookup argument
+        for e in lookup_evals
+            .iter()
+            .zip(pk.vk.cs.lookups.iter())
+            .flat_map(move |(p, argument)| {
+                p.expressions(
+                    l_0,
+                    l_last,
+                    l_blind,
+                    argument,
+                    theta,
+                    beta,
+                    gamma,
+                    advice_evals,
+                    fixed_evals,
+                    instance_evals,
+                    challenges,
+                )
+            })
+        {
+            evaluated_expressions.push((None, e))
+        }
+
+        // Evaluate polys from trashcan
+        for e in trashcan_evals
+            .iter()
+            .zip(pk.vk.cs.trashcans.iter())
+            .flat_map(move |(p, argument)| {
+                p.expressions(
+                    argument,
+                    trash_challenge,
+                    advice_evals,
+                    fixed_evals,
+                    instance_evals,
+                    challenges,
+                )
+            })
+        {
+            evaluated_expressions.push((None, e))
+        }
+    }
+
+    let t = std::time::Instant::now();
+    let linearization_poly =
+        construct_linearization_poly(evaluated_expressions, pk, y, x, xn, quotient_limbs);
+    println!(
+        "Linearization poly built in {:?} ms",
+        format_args!("{:.1}", t.elapsed().as_secs_f32() * 1000.0)
+    );
 
     let queries = instance_polys
         .iter()
@@ -774,15 +1001,23 @@ where
                 .cs
                 .fixed_queries
                 .iter()
+                // TODO: filter out fixed queries for simple selectors
+                .filter(|(col, _)| !pk.vk.cs.indices_simple_selectors.contains(&col.index()))
                 .map(|&(column, at)| ProverQuery {
                     point: domain.rotate_omega(x, at),
                     poly: &pk.fixed_polys[column.index()],
                 }),
         )
         .chain(pk.permutation.open(x))
-        // We query the h(X) polynomial at x
-        .chain(vanishing.open(x))
+        // TODO: check if this lin poly is being evaluated or not (possibly not: multi open batches all polys)
+        .chain(iter::once(ProverQuery {
+            point: domain.rotate_omega(x, Rotation::cur()),
+            poly: &linearization_poly,
+        }))
         .collect::<Vec<_>>();
+    // We query the h(X) polynomial at x
+    // TODO: do we need to open the random poly?
+    // .chain(vanishing.open(x));
 
     CS::multi_open(params, &queries, transcript).map_err(|_| Error::ConstraintSystemFailure)
 }

@@ -68,7 +68,6 @@ fn main() {
 
     let relation = PoseidonExample;
     let vk = compact_std_lib::setup_vk(&srs, &relation);
-    // println!("{:?}", vk);
     let pk = compact_std_lib::setup_pk(&relation, &vk);
 
     let mut rng = ChaCha8Rng::from_entropy();

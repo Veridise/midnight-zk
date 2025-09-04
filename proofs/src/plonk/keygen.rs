@@ -314,7 +314,7 @@ where
 
     let mut fixed = batch_invert_rational(assembly.fixed);
     // After this, the ConstraintSystem should not have any selectors: `verify` does
-    // not need them, and `keygen_pk` regenerates `cs` from scratch anyways.
+    // not need them, and `keygen_pk` regenerates `cs` from scratch anyways
     let selectors = std::mem::take(&mut assembly.selectors);
     let (cs, selector_polys) = cs.directly_convert_selectors_to_fixed(selectors);
     fixed.extend(
@@ -327,8 +327,7 @@ where
         .permutation
         .build_vk(params, &domain, &cs.permutation);
 
-    // fixed_commitments is sorted according to fixed
-    // (which is ordered per column index)
+    // `fixed_commitments` is indexed according to `fixed` (which is ordered per column index)
     let fixed_commitments = fixed
         .iter()
         .map(|poly| CS::commit_lagrange(params, poly))
@@ -387,7 +386,7 @@ where
             .map(|poly| vk.domain.lagrange_from_vec(poly)),
     );
 
-    // fixed_polys is sorted according to column_index
+    // `fixed_polys` is indexed according to column_index
     let fixed_polys: Vec<_> = fixed
         .par_iter()
         .map(|poly| vk.domain.lagrange_to_coeff(poly.clone()))

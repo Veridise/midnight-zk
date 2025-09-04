@@ -19,23 +19,17 @@ pub struct Constructed<F: PrimeField, CS: PolynomialCommitmentScheme<F>> {
     random_poly_commitment: CS::Commitment,
 }
 
-pub struct PartiallyEvaluated<F: PrimeField, CS: PolynomialCommitmentScheme<F>> {
-    h_commitments: Vec<CS::Commitment>,
-    random_poly_commitment: CS::Commitment,
-    random_eval: F,
+impl<F: PrimeField, CS: PolynomialCommitmentScheme<F>> Evaluated<F, CS> {
+    pub fn h_limb_commitments(&self) -> &Vec<CS::Commitment> {
+        &self.h_commitments
+    }
 }
 
 pub struct Evaluated<F: PrimeField, CS: PolynomialCommitmentScheme<F>> {
     h_commitments: Vec<CS::Commitment>,
+    // TODO: consider removing
     random_poly_commitment: CS::Commitment,
-    expected_h_eval: F,
     random_eval: F,
-}
-
-impl<F: PrimeField, CS: PolynomialCommitmentScheme<F>> Evaluated<F, CS> {
-    pub fn expected_h_eval(&self) -> F {
-        self.expected_h_eval
-    }
 }
 
 impl<F: PrimeField, CS: PolynomialCommitmentScheme<F>> Argument<F, CS> {
@@ -72,60 +66,21 @@ impl<F: WithSmallOrderMulGroup<3>, CS: PolynomialCommitmentScheme<F>> Committed<
     }
 }
 
+// TODO: consider removing
 impl<F: WithSmallOrderMulGroup<3>, CS: PolynomialCommitmentScheme<F>> Constructed<F, CS> {
     pub(in crate::plonk) fn evaluate_after_x<T: Transcript>(
         self,
         transcript: &mut T,
-    ) -> Result<PartiallyEvaluated<F, CS>, Error>
+    ) -> Result<Evaluated<F, CS>, Error>
     where
         F: Hashable<T::Hash>,
     {
         let random_eval = transcript.read()?;
 
-        Ok(PartiallyEvaluated {
+        Ok(Evaluated {
             h_commitments: self.h_commitments,
             random_poly_commitment: self.random_poly_commitment,
             random_eval,
         })
-    }
-}
-
-impl<F: PrimeField, CS: PolynomialCommitmentScheme<F>> PartiallyEvaluated<F, CS> {
-    pub(in crate::plonk) fn verify(
-        self,
-        expressions: impl Iterator<Item = F>,
-        y: F,
-        xn: F,
-    ) -> Evaluated<F, CS> {
-        let expected_h_eval = expressions.fold(F::ZERO, |h_eval, v| h_eval * &y + &v);
-        let expected_h_eval = expected_h_eval * ((xn - F::ONE).invert().unwrap());
-
-        Evaluated {
-            h_commitments: self.h_commitments,
-            random_poly_commitment: self.random_poly_commitment,
-            expected_h_eval,
-            random_eval: self.random_eval,
-        }
-    }
-}
-
-impl<F: PrimeField, CS: PolynomialCommitmentScheme<F>> Evaluated<F, CS> {
-    pub(in crate::plonk) fn queries(
-        &self,
-        x: F,
-        n: u64,
-    ) -> impl Iterator<Item = VerifierQuery<F, CS>> + Clone + '_ {
-        iter::empty()
-            .chain(Some(VerifierQuery::from_parts(
-                x,
-                &self.h_commitments.iter().collect::<Vec<_>>(),
-                self.expected_h_eval,
-                n,
-            )))
-            .chain(Some(VerifierQuery::new(
-                x,
-                &self.random_poly_commitment,
-                self.random_eval,
-            )))
     }
 }
