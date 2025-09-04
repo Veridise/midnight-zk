@@ -2,7 +2,7 @@ use std::{hash::Hash, iter};
 
 use ff::{FromUniformBytes, PrimeField, WithSmallOrderMulGroup};
 
-use super::{vanishing, Error, VerifyingKey};
+use super::{Error, VerifyingKey};
 use crate::{
     plonk::traces::VerifierTrace,
     poly::{commitment::PolynomialCommitmentScheme, Rotation, VerifierQuery},
@@ -151,14 +151,11 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let vanishing = vanishing::Argument::read_commitments_before_y(transcript)?;
-
     // Sample identity batching challenge y, for batching all independent identities
     let y: F = transcript.squeeze_challenge();
 
     Ok(VerifierTrace {
         advice_commitments,
-        vanishing,
         lookups: lookup_product_commitments,
         trashcans: trashcan_commitments,
         permutations: permutation_product_commitments,
@@ -205,7 +202,6 @@ where
     // Destructuring assignment of given verifier trace
     let VerifierTrace {
         advice_commitments,
-        vanishing,
         lookups,
         trashcans,
         permutations,
@@ -218,7 +214,7 @@ where
     } = trace;
 
     // Read commitments to limbs of the quotient polynomial h(X) = nu(X)/(X^n-1) from the transcript
-    let vanishing = vanishing.read_commitments_after_y(vk, transcript)?;
+    let h_limb_commitments = read_n(transcript, vk.domain.get_quotient_poly_degree())?;
 
     // Sample evaluation challenge x
     let x: F = transcript.squeeze_challenge();
@@ -280,11 +276,6 @@ where
     // evals of simple selectors)
     let fixed_evals = read_n(transcript, vk.cs.fixed_queries.len())?;
 
-    // TODO: consider getting h limbs from Constructed struct above and remove this
-    let vanishing = vanishing.evaluate_after_x(transcript)?;
-
-    // TODO: for constructing commitment to linearization polynomial
-    let h_limb_commitments = vanishing.h_limb_commitments();
     let permutations_common = vk.permutation.evaluate(transcript)?;
 
     let permutation_evals = permutations
@@ -354,8 +345,8 @@ where
         acc - linearized_h
     }
 
-    // Partially evaluate batched identities
-    // (without fixed columns corresponding to simple selectors)
+    // Partially evaluate batched identities (without fixed columns
+    // corresponding to simple selectors)
     let xn = x.pow([vk.n()]);
     let nr_blinding_factors = vk.cs.nr_blinding_factors();
     let l_evals = vk
@@ -475,7 +466,7 @@ where
 
     let t = std::time::Instant::now();
     let linearization_commitment =
-        construct_linearization_commitment(vk, evaluated_expressions, y, xn, h_limb_commitments);
+        construct_linearization_commitment(vk, evaluated_expressions, y, xn, &h_limb_commitments);
     println!(
         "Linearization commitment built in {:?} ms",
         format_args!("{:.1}", t.elapsed().as_secs_f32() * 1000.0)
@@ -556,8 +547,6 @@ where
             F::ZERO,
         )))
         .collect::<Vec<_>>();
-    // TODO: don't need random poly?! Saving commitment+eval in trace
-    // .chain(vanishing.queries(x, vk.n()))
 
     // We are now convinced the circuit is satisfied so long as the
     // polynomial commitments open to the correct values.

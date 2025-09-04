@@ -14,8 +14,9 @@ use super::{
         Advice, Any, Assignment, Challenge, Circuit, Column, ConstraintSystem, Fixed, FloorPlanner,
         Instance, Selector,
     },
-    lookup, permutation, vanishing, Error, ProvingKey,
+    lookup, permutation, Error, ProvingKey,
 };
+
 #[cfg(feature = "committed-instances")]
 use crate::poly::EvaluationDomain;
 use crate::{
@@ -519,9 +520,6 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Commit to the vanishing argument's random polynomial for blinding h(x_3)
-    let vanishing = vanishing::Argument::<F, CS>::commit(params, domain, &mut rng, transcript)?;
-
     // Sample identity batching challenge y, for batching all independent identities
     let y: F = transcript.squeeze_challenge();
 
@@ -542,7 +540,6 @@ where
             .collect(),
         instance_polys,
         instance_values,
-        vanishing,
         lookups,
         trashcans,
         permutations,
@@ -597,7 +594,6 @@ where
         gamma,
         theta,
         trash_challenge,
-        vanishing,
         ..
     } = trace;
 
@@ -655,9 +651,56 @@ where
     drop(advice_cosets);
     drop(instance_cosets);
 
-    // Construct the quotient polynomial h(X)=nu(X)/(X^n-1), split it into limbs of size n, commit to each limb separately, and write limb commitments to the transcript
-    let vanishing =
-        vanishing.construct::<CS, T>(params, pk.get_vk().get_domain(), nu_poly, transcript)?;
+    fn construct_h_poly<
+        F: WithSmallOrderMulGroup<3> + Hashable<T::Hash>,
+        CS: PolynomialCommitmentScheme<F>,
+        T: Transcript,
+    >(
+        params: &CS::Parameters,
+        domain: &EvaluationDomain<F>,
+        nu_poly: Polynomial<F, ExtendedLagrangeCoeff>,
+        transcript: &mut T,
+    ) -> Result<Vec<Polynomial<F, Coeff>>, Error>
+    where
+        CS::Commitment: Hashable<T::Hash>,
+    {
+        // Construct quotient polynomial h(X): divide nu(X) by t(X) = X^{params.n} - 1
+        let h_poly = domain.divide_by_vanishing_poly(nu_poly);
+
+        // Obtain final quotient polynomial h(X) in coefficient form
+        let mut h_poly = domain.extended_to_coeff(h_poly);
+
+        // Truncate coefficient vector of h(X) to match the size of the quotient polynomial;
+        // the evaluation domain might be slightly larger than necessary because it always lies
+        // on a power-of-two boundary
+        h_poly.truncate(domain.n as usize * domain.get_quotient_poly_degree());
+
+        // Split h(X) up into pieces h_i(X) of size n (i.e., deg(h_i)<=n-1);
+        // h(X) = h_0(X) + X^n*h_1(X) + X^{2n}*h_2(X) + ... + X^{ln}*h_l(X)
+        let h_pieces = h_poly
+            .chunks_exact(domain.n as usize)
+            .map(|v| domain.coeff_from_vec(v.to_vec()))
+            .collect::<Vec<_>>();
+        drop(h_poly);
+
+        // Compute commitments to each h_i(X) limb
+        let h_commitments: Vec<_> = h_pieces
+            .iter()
+            .map(|h_piece| CS::commit(params, h_piece))
+            .collect();
+
+        // Write limb commitments to the transcript
+        for c in h_commitments.iter() {
+            transcript.write(c)?;
+        }
+
+        Ok(h_pieces)
+    }
+
+    // Construct the quotient polynomial h(X)=nu(X)/(X^n-1), split it into limbs of size n,
+    // commit to each limb separately, and write limb commitments to the transcript
+    let quotient_limbs =
+        construct_h_poly::<F, CS, T>(params, pk.get_vk().get_domain(), nu_poly, transcript)?;
 
     // Sample evaluation challenge x
     let x: F = transcript.squeeze_challenge();
@@ -693,8 +736,7 @@ where
             .advice_queries
             .iter()
             .map(|&(column, at)| {
-                let eval = eval_polynomial(&advice[column.index()], domain.rotate_omega(x, at));
-                eval
+                eval_polynomial(&advice[column.index()], domain.rotate_omega(x, at))
             })
             .collect();
 
@@ -723,8 +765,8 @@ where
         transcript.write(eval)?;
     }
 
-    let quotient_limbs = vanishing.h_pieces.clone();
-    let vanishing = vanishing.evaluate(x, domain, transcript)?;
+    // TODO: consider removing this
+    // let vanishing = vanishing.evaluate(x, domain, transcript)?;
 
     // Evaluate common permutation data
     let permutations_common = pk.permutation.evaluate(x, transcript)?;
@@ -1015,9 +1057,6 @@ where
             poly: &linearization_poly,
         }))
         .collect::<Vec<_>>();
-    // We query the h(X) polynomial at x
-    // TODO: do we need to open the random poly?
-    // .chain(vanishing.open(x));
 
     CS::multi_open(params, &queries, transcript).map_err(|_| Error::ConstraintSystemFailure)
 }
