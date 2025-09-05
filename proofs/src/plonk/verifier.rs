@@ -272,9 +272,16 @@ where
         .map(|_| -> Result<Vec<_>, _> { read_n(transcript, vk.cs.advice_queries.len()) })
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Read evals of all fixed polys from transcript (here, `fixed_evals` also includes
-    // evals of simple selectors)
-    let fixed_evals = read_n(transcript, vk.cs.fixed_queries.len())?;
+    // Read all evals of fixed columns from transcript (transcript doesn't contains evals
+    // corresponding to simple selectors)
+    // Read only `num_filtered_queries` evals from the transcript (i.e., `num_fixed_columns`` - `num_simple_selectors` evals)
+    let mut fixed_evals = read_n(transcript, vk.cs.num_filtered_queries)?;
+
+    for (idx, (col, _)) in vk.cs.fixed_queries().iter().enumerate() {
+        if vk.cs.indices_simple_selectors.contains(&col.index()) {
+            fixed_evals.insert(idx, F::ONE)
+        }
+    }
 
     let permutations_common = vk.permutation.evaluate(transcript)?;
 
@@ -376,20 +383,7 @@ where
                 let evaluation = poly.evaluate(
                     &|scalar| scalar,
                     &|_| panic!("virtual selectors are removed during optimization"),
-                    // Partially evaluate all gate polys with simple selectors
-                    &|query| {
-                        if vk
-                            .cs
-                            .indices_simple_selectors
-                            // Here, we need the *column* index of the fixed column
-                            // corresponding to the simple selector
-                            .contains(&query.column_index())
-                        {
-                            F::ONE
-                        } else {
-                            fixed_evals[query.index.unwrap()]
-                        }
-                    },
+                    &|query| fixed_evals[query.index().unwrap()],
                     &|query| advice_evals[query.index.unwrap()],
                     &|query| instance_evals[query.index.unwrap()],
                     &|challenge| challenges[challenge.index()],

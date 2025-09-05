@@ -754,19 +754,25 @@ where
     let fixed_evals: Vec<F> = meta
         .fixed_queries
         .iter()
-        // .filter(|(column, _)| !meta.indices_simple_selectors.contains(&column.index()))
         .map(|&(column, at)| {
-            eval_polynomial(&pk.fixed_polys[column.index()], domain.rotate_omega(x, at))
+            if meta.indices_simple_selectors.contains(&column.index()) {
+                // fixed columns corresponding to simple selectors don't need to be evaluated;
+                // return 1 for partial evaluations
+                F::ONE
+            } else {
+                eval_polynomial(&pk.fixed_polys[column.index()], domain.rotate_omega(x, at))
+            }
         })
         .collect();
 
-    // Hash each fixed column evaluation
-    for eval in fixed_evals.iter() {
-        transcript.write(eval)?;
+    // Write only fixed evals corresponding to *non-simple* selectors
+    // to the transcript
+    for (idx, (col, _)) in meta.fixed_queries.iter().enumerate() {
+        // if true {
+        if !meta.indices_simple_selectors.contains(&col.index()) {
+            transcript.write(&fixed_evals[idx])?;
+        }
     }
-
-    // TODO: consider removing this
-    // let vanishing = vanishing.evaluate(x, domain, transcript)?;
 
     // Evaluate common permutation data
     let permutations_common = pk.permutation.evaluate(x, transcript)?;
@@ -907,22 +913,7 @@ where
                 let evaluation = poly.evaluate(
                     &|scalar| scalar,
                     &|_| panic!("virtual selectors are removed during optimization"),
-                    // Partially evaluate all gate polys with simple selectors
-                    &|query| {
-                        if pk
-                            .vk
-                            .cs
-                            .indices_simple_selectors
-                            // Here, we need the column index of the fixed column corresponding to the simple selector
-                            .contains(&query.column_index())
-                        {
-                            F::ONE
-                            // TODO: for debugging, don't do anything
-                            // fixed_evals[query.index.unwrap()]
-                        } else {
-                            fixed_evals[query.index.unwrap()]
-                        }
-                    },
+                    &|query| fixed_evals[query.index().unwrap()],
                     &|query| advice_evals[query.index.unwrap()],
                     &|query| instance_evals[query.index.unwrap()],
                     &|challenge| challenges[challenge.index()],

@@ -1669,6 +1669,8 @@ pub struct ConstraintSystem<F: Field> {
     pub(crate) num_selectors: usize,
     pub(crate) selector_flags: Vec<bool>,
     pub(crate) indices_simple_selectors: Vec<usize>,
+    pub(crate) num_filtered_queries: usize,
+    pub(crate) num_nonsimple_selectors: usize,
     pub(crate) num_challenges: usize,
 
     /// Contains the index of each advice column that is left unblinded.
@@ -1802,6 +1804,8 @@ impl<F: Field> Default for ConstraintSystem<F> {
             num_selectors: 0,
             selector_flags: vec![],
             indices_simple_selectors: vec![],
+            num_filtered_queries: 0,
+            num_nonsimple_selectors: 0,
             num_challenges: 0,
             unblinded_advice_columns: Vec::new(),
             advice_column_phase: Vec::new(),
@@ -2101,7 +2105,7 @@ impl<F: Field> ConstraintSystem<F> {
         assert_eq!(selectors.len(), self.num_selectors);
 
         let nr_fixed_columns = self.num_fixed_columns();
-
+        let mut nr_nonsimple_selectors: usize = 0;
         let (polys, selector_replacements): (Vec<_>, Vec<_>) = selectors
             .into_iter()
             .enumerate()
@@ -2114,6 +2118,8 @@ impl<F: Field> ConstraintSystem<F> {
                 let column = self.fixed_column();
                 if self.selector_flags[idx] {
                     self.indices_simple_selectors.push(column.index());
+                } else {
+                    nr_nonsimple_selectors += 1;
                 }
                 let rotation = Rotation::cur();
                 let expr = Expression::Fixed(FixedQuery {
@@ -2127,6 +2133,8 @@ impl<F: Field> ConstraintSystem<F> {
 
         self.replace_selectors_with_fixed(&selector_replacements);
         self.num_selectors = 0;
+        self.num_filtered_queries = nr_nonsimple_selectors + nr_fixed_columns;
+        self.num_nonsimple_selectors = nr_nonsimple_selectors;
 
         // Adjust indices of (multiplicative) simple selectors: after converting selectors
         // to fixed columns, `selector_index` should now contain the index of the corresponding
