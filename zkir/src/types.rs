@@ -12,7 +12,7 @@ type AssignedBit = midnight_circuits::types::AssignedBit<F>;
 type AssignedByte = midnight_circuits::types::AssignedByte<F>;
 type AssignedNative = midnight_circuits::types::AssignedNative<F>;
 type AssignedJubjubPoint = midnight_circuits::types::AssignedNativePoint<JubjubExtended>;
-type AssignedJubjubScalar = midnight_circuits::types::ScalarVar<JubjubExtended>;
+type AssignedJubjubScalar = midnight_circuits::types::AssignedScalarOfNativeCurve<JubjubExtended>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)] //
 pub enum ValType {
@@ -118,14 +118,14 @@ impl<'a> Parser<'a> {
     pub fn get_bit(&mut self, name: &String) -> Result<AssignedBit, Error> {
         match self.get(name) {
             Some(CircuitType::Bit(bit)) => Ok(bit.clone()),
-            _ => Err(Error::Synthesis),
+            _ => Err(Error::Synthesis("".into())),
         }
     }
 
     pub fn get_byte(&mut self, name: &String) -> Result<AssignedByte, Error> {
         match self.get(name) {
             Some(CircuitType::Byte(byte)) => Ok(byte.clone()),
-            _ => Err(Error::Synthesis),
+            _ => Err(Error::Synthesis("".into())),
         }
     }
 
@@ -135,28 +135,28 @@ impl<'a> Parser<'a> {
                 assert_eq!(bytes.len(), n);
                 Ok(bytes.clone())
             }
-            _ => Err(Error::Synthesis),
+            _ => Err(Error::Synthesis("".into())),
         }
     }
 
     pub fn get_native(&mut self, name: &String) -> Result<AssignedNative, Error> {
         match self.get(name) {
             Some(CircuitType::Native(x)) => Ok(x.clone()),
-            _ => Err(Error::Synthesis),
+            _ => Err(Error::Synthesis("".into())),
         }
     }
 
     pub fn get_jubjub_point(&mut self, name: &String) -> Result<AssignedJubjubPoint, Error> {
         match self.get(name) {
             Some(CircuitType::JubjubPoint(p)) => Ok(p.clone()),
-            _ => Err(Error::Synthesis),
+            _ => Err(Error::Synthesis("".into())),
         }
     }
 
     pub fn get_jubjub_scalar(&mut self, name: &String) -> Result<AssignedJubjubScalar, Error> {
         match self.get(name) {
             Some(CircuitType::JubjubScalar(s)) => Ok(s.clone()),
-            _ => Err(Error::Synthesis),
+            _ => Err(Error::Synthesis("".into())),
         }
     }
 }

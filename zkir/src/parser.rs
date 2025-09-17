@@ -27,7 +27,7 @@ type AssignedBit = midnight_circuits::types::AssignedBit<F>;
 type AssignedByte = midnight_circuits::types::AssignedByte<F>;
 type AssignedNative = midnight_circuits::types::AssignedNative<F>;
 type AssignedJubjubPoint = midnight_circuits::types::AssignedNativePoint<JubjubExtended>;
-type AssignedJubjubScalar = midnight_circuits::types::ScalarVar<JubjubExtended>;
+type AssignedJubjubScalar = midnight_circuits::types::AssignedScalarOfNativeCurve<JubjubExtended>;
 
 pub(crate) struct Parser<'a> {
     std_lib: &'a ZkStdLib,
@@ -44,7 +44,7 @@ impl<'a> Parser<'a> {
 
     pub fn insert(&mut self, name: &str, value: &CircuitType) -> Result<(), Error> {
         self.memory.insert(name.to_owned(), value.clone()).map_or(Ok(()), |_| {
-            Err(Error::SynthesisWithMsg(format!(
+            Err(Error::Synthesis(format!(
                 "variable {} already exists",
                 name
             )))
@@ -53,7 +53,7 @@ impl<'a> Parser<'a> {
 
     pub fn insert_many(&mut self, names: &[String], values: &[CircuitType]) -> Result<(), Error> {
         if names.len() != values.len() {
-            return Err(Error::Synthesis);
+            return Err(Error::Synthesis("".into()));
         }
         (names.iter().zip(values.iter())).try_for_each(|(name, value)| self.insert(name, value))
     }
@@ -74,11 +74,11 @@ impl<'a> Parser<'a> {
             if let Some(v) = self.get(name) {
                 let t = inferred_type.get_or_insert_with(|| type_of(&v));
                 if &type_of(&v) != t {
-                    return Err(Error::Synthesis);
+                    return Err(Error::Synthesis("".into()));
                 }
             }
         }
-        inferred_type.ok_or(Error::SynthesisWithMsg(format!(
+        inferred_type.ok_or(Error::Synthesis(format!(
             "type {:?} not be inferred",
             names
         )))
@@ -94,20 +94,20 @@ impl<'a> Parser<'a> {
     ) -> Result<(), Error> {
         match val_t {
             ValType::Bit => {
-                let bit_val = parse_bit(name).ok_or(Error::Synthesis)?;
+                let bit_val = parse_bit(name).ok_or(Error::Synthesis("".into()))?;
                 let bit = self.std_lib.assign_fixed(layouter, bit_val)?;
                 self.insert(name, &CircuitType::Bit(bit))
             }
             ValType::Byte => {
-                let byte_val = parse_byte(name).ok_or(Error::Synthesis)?;
+                let byte_val = parse_byte(name).ok_or(Error::Synthesis("".into()))?;
                 let byte = self.std_lib.assign_fixed(layouter, byte_val)?;
                 self.insert(name, &CircuitType::Byte(byte))
             }
             ValType::Bytes(n) => {
-                let byte_vals = parse_bytes(name).ok_or(Error::Synthesis)?;
+                let byte_vals = parse_bytes(name).ok_or(Error::Synthesis("".into()))?;
                 let bytes = self.std_lib.assign_many_fixed(layouter, &byte_vals)?;
                 if bytes.len() != n {
-                    return Err(Error::SynthesisWithMsg(format!(
+                    return Err(Error::Synthesis(format!(
                         "expected {} bytes, {} given",
                         n,
                         bytes.len()
@@ -116,7 +116,7 @@ impl<'a> Parser<'a> {
                 self.insert(name, &CircuitType::Bytes(bytes))
             }
             ValType::Native => {
-                let x_val = parse_native(name).ok_or(Error::Synthesis)?;
+                let x_val = parse_native(name).ok_or(Error::Synthesis("".into()))?;
                 let x = self.std_lib.assign_fixed(layouter, x_val)?;
                 self.insert(name, &CircuitType::Native(x))
             }
@@ -385,7 +385,7 @@ impl Relation for IrSource {
                 loads_type(op, ValType::JubjubPoint) || loads_type(op, ValType::JubjubScalar)
             }),
             poseidon: false,
-            sha256: None,
+            sha256: false,
             secp256k1: false,
             bls12_381: false,
             nr_pow2range_cols: 4,
@@ -558,7 +558,7 @@ fn add(
             let r = (parser.std_lib).linear_combination(layouter, &terms, F::ZERO)?;
             parser.insert(output, &CircuitType::Native(r))
         }
-        t => Err(Error::SynthesisWithMsg(format!("add unsupported: {:?}", t))),
+        t => Err(Error::Synthesis(format!("add unsupported: {:?}", t))),
     }
 }
 
@@ -569,9 +569,7 @@ fn mul(
     output: &str,
 ) -> Result<(), Error> {
     if vals.is_empty() {
-        return Err(Error::SynthesisWithMsg(
-            "mul expects at least one variable".into(),
-        ));
+        return Err(Error::Synthesis("mul expects at least one variable".into()));
     }
 
     let val_t = parser.infer_type(vals)?;
@@ -585,7 +583,7 @@ fn mul(
             }
             parser.insert(output, &CircuitType::Native(acc))
         }
-        t => Err(Error::SynthesisWithMsg(format!("mul unsupported: {:?}", t))),
+        t => Err(Error::Synthesis(format!("mul unsupported: {:?}", t))),
     }
 }
 
@@ -600,7 +598,7 @@ fn neg(
             let r = parser.std_lib.neg(layouter, &parser.get_native(val)?)?;
             parser.insert(output, &CircuitType::Native(r))
         }
-        t => Err(Error::SynthesisWithMsg(format!("neg unsupported: {:?}", t))),
+        t => Err(Error::Synthesis(format!("neg unsupported: {:?}", t))),
     }
 }
 
@@ -615,7 +613,7 @@ fn not(
             let b = parser.std_lib.not(layouter, &parser.get_bit(val)?)?;
             parser.insert(output, &CircuitType::Bit(b))
         }
-        t => Err(Error::SynthesisWithMsg(format!("not unsupported: {:?}", t))),
+        t => Err(Error::Synthesis(format!("not unsupported: {:?}", t))),
     }
 }
 
@@ -630,7 +628,7 @@ fn msm(
     output: &str,
 ) -> Result<(), Error> {
     if bases.len() != scalars.len() {
-        return Err(Error::SynthesisWithMsg(format!(
+        return Err(Error::Synthesis(format!(
             "|bases| != |scalars| ({:?} vs {:?})",
             bases.len(),
             scalars.len()
@@ -655,7 +653,7 @@ fn msm(
             let p = parser.std_lib.jubjub().msm(layouter, &scalars, &bases)?;
             parser.insert(output, &CircuitType::JubjubPoint(p))
         }
-        _ => Err(Error::SynthesisWithMsg(format!(
+        _ => Err(Error::Synthesis(format!(
             "msm invalid input types( bases: {:?}, scalars: {:?} )",
             bases_t, scalars_t
         ))),
@@ -730,10 +728,10 @@ fn from_bytes(
             parser.insert(output, &CircuitType::Native(x))
         }
         ValType::JubjubScalar => {
-            let x = parser.std_lib.jubjub().assigned_from_le_bytes(layouter, &bytes)?;
+            let x = parser.std_lib.jubjub().scalar_from_le_bytes(layouter, &bytes)?;
             parser.insert(output, &CircuitType::JubjubScalar(x))
         }
-        t => Err(Error::SynthesisWithMsg(format!(
+        t => Err(Error::Synthesis(format!(
             "from_bytes is unsupported on {:?}",
             t
         ))),
