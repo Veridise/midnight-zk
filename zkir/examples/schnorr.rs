@@ -43,7 +43,7 @@ fn main() {
             { "op": "affine_coordinates", "val": "R", "output": ["Rx", "Ry"] },
             { "op": "poseidon", "vals": ["PKx", "PKy", "Rx", "Ry", "msg"], "output": "h" },
             { "op": "into_bytes", "nb_bytes": 32, "val": "h", "output": "h_bytes" },
-            { "op": "assert_equal", "vals": ["e_bytes", "h_bytes" ] }
+            { "op": "assert_equal", "vals": ["e_bytes", "h_bytes"] }
         ]
     }
     "#;
@@ -58,16 +58,13 @@ fn main() {
     let msg = F::random(&mut rng);
     let sig = sign(msg, &sk, &mut rng);
 
-    let instance = vec![OffCircuitType::Native(msg)];
-    let witness = HashMap::from_iter(
-        [
-            ("PK", OffCircuitType::JubjubPoint(pk)),
-            ("msg", OffCircuitType::Native(msg)),
-            ("s", OffCircuitType::JubjubScalar(sig.s)),
-            ("e_bytes", OffCircuitType::Bytes(sig.e_bytes.to_vec())),
-        ]
-        .into_iter(),
-    );
+    let witness = HashMap::from_iter([
+        ("PK", pk.into()),
+        ("msg", OffCircuitType::Native(msg)),
+        ("s", OffCircuitType::JubjubScalar(sig.s)),
+        ("e_bytes", OffCircuitType::Bytes(sig.e_bytes.to_vec())),
+    ]);
+    let instance = ir.public_inputs(witness.clone());
 
     let k = MidnightCircuit::from_relation(&ir).min_k();
     let srs = ParamsKZG::unsafe_setup(k, OsRng);

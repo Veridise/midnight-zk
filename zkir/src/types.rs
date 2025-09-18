@@ -14,8 +14,8 @@ type AssignedNative = midnight_circuits::types::AssignedNative<F>;
 type AssignedJubjubPoint = midnight_circuits::types::AssignedNativePoint<JubjubExtended>;
 type AssignedJubjubScalar = midnight_circuits::types::AssignedScalarOfNativeCurve<JubjubExtended>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize)] //
-pub enum ValType {
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+pub(crate) enum ValType {
     Bit,
     Byte,
     Bytes(usize),
@@ -63,7 +63,49 @@ pub fn type_of(v: &CircuitType) -> ValType {
     }
 }
 
-pub fn get_bit(memory: &HashMap<&'static str, OffCircuitType>, name: &str) -> bool {
+impl From<bool> for OffCircuitType {
+    fn from(bit: bool) -> Self {
+        OffCircuitType::Bit(bit)
+    }
+}
+
+impl From<u8> for OffCircuitType {
+    fn from(byte: u8) -> Self {
+        OffCircuitType::Byte(byte)
+    }
+}
+
+impl From<Vec<u8>> for OffCircuitType {
+    fn from(bytes: Vec<u8>) -> Self {
+        OffCircuitType::Bytes(bytes)
+    }
+}
+
+impl From<F> for OffCircuitType {
+    fn from(x: F) -> Self {
+        OffCircuitType::Native(x)
+    }
+}
+
+impl From<JubjubSubgroup> for OffCircuitType {
+    fn from(p: JubjubSubgroup) -> Self {
+        OffCircuitType::JubjubPoint(p)
+    }
+}
+
+impl From<JubjubScalar> for OffCircuitType {
+    fn from(s: JubjubScalar) -> Self {
+        OffCircuitType::JubjubScalar(s)
+    }
+}
+
+impl From<AssignedBit> for CircuitType {
+    fn from(bit: AssignedBit) -> Self {
+        CircuitType::Bit(bit)
+    }
+}
+
+pub fn get_bit(memory: &HashMap<String, OffCircuitType>, name: &str) -> bool {
     match memory.get(name) {
         Some(OffCircuitType::Bit(bit)) => *bit,
         Some(_) => panic!("variable {} is not of type Bit", name),
@@ -71,7 +113,7 @@ pub fn get_bit(memory: &HashMap<&'static str, OffCircuitType>, name: &str) -> bo
     }
 }
 
-pub fn get_byte(memory: &HashMap<&'static str, OffCircuitType>, name: &str) -> u8 {
+pub fn get_byte(memory: &HashMap<String, OffCircuitType>, name: &str) -> u8 {
     match memory.get(name) {
         Some(OffCircuitType::Byte(byte)) => *byte,
         Some(_) => panic!("variable {} is not of type Byte", name),
@@ -79,7 +121,7 @@ pub fn get_byte(memory: &HashMap<&'static str, OffCircuitType>, name: &str) -> u
     }
 }
 
-pub fn get_bytes(memory: &HashMap<&'static str, OffCircuitType>, name: &str, n: usize) -> Vec<u8> {
+pub fn get_bytes(memory: &HashMap<String, OffCircuitType>, name: &str, n: usize) -> Vec<u8> {
     match memory.get(name) {
         Some(OffCircuitType::Bytes(bytes)) => {
             assert_eq!(bytes.len(), n);
@@ -90,7 +132,7 @@ pub fn get_bytes(memory: &HashMap<&'static str, OffCircuitType>, name: &str, n: 
     }
 }
 
-pub fn get_native(memory: &HashMap<&'static str, OffCircuitType>, name: &str) -> F {
+pub fn get_native(memory: &HashMap<String, OffCircuitType>, name: &str) -> F {
     match memory.get(name) {
         Some(OffCircuitType::Native(x)) => *x,
         Some(_) => panic!("variable {} is not of type Field", name),
@@ -98,10 +140,7 @@ pub fn get_native(memory: &HashMap<&'static str, OffCircuitType>, name: &str) ->
     }
 }
 
-pub fn get_jubjub_point(
-    memory: &HashMap<&'static str, OffCircuitType>,
-    name: &str,
-) -> JubjubSubgroup {
+pub fn get_jubjub_point(memory: &HashMap<String, OffCircuitType>, name: &str) -> JubjubSubgroup {
     match memory.get(name) {
         Some(OffCircuitType::JubjubPoint(p)) => *p,
         Some(_) => panic!("variable {} is not of type JubjubPoint", name),
@@ -109,10 +148,7 @@ pub fn get_jubjub_point(
     }
 }
 
-pub fn get_jubjub_scalar(
-    memory: &HashMap<&'static str, OffCircuitType>,
-    name: &str,
-) -> JubjubScalar {
+pub fn get_jubjub_scalar(memory: &HashMap<String, OffCircuitType>, name: &str) -> JubjubScalar {
     match memory.get(name) {
         Some(OffCircuitType::JubjubScalar(s)) => *s,
         Some(_) => panic!("variable {} is not of type JubjubScalar", name),
@@ -128,14 +164,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn get_byte(&mut self, name: &String) -> Result<AssignedByte, Error> {
+    pub fn get_byte(&mut self, name: &str) -> Result<AssignedByte, Error> {
         match self.get(name) {
             Some(CircuitType::Byte(byte)) => Ok(byte.clone()),
             _ => Err(Error::Synthesis("".into())),
         }
     }
 
-    pub fn get_bytes(&mut self, name: &String, n: usize) -> Result<Vec<AssignedByte>, Error> {
+    pub fn get_bytes(&mut self, name: &str, n: usize) -> Result<Vec<AssignedByte>, Error> {
         match self.get(name) {
             Some(CircuitType::Bytes(bytes)) => {
                 assert_eq!(bytes.len(), n);
@@ -145,21 +181,21 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn get_native(&mut self, name: &String) -> Result<AssignedNative, Error> {
+    pub fn get_native(&mut self, name: &str) -> Result<AssignedNative, Error> {
         match self.get(name) {
             Some(CircuitType::Native(x)) => Ok(x.clone()),
             _ => Err(Error::Synthesis("".into())),
         }
     }
 
-    pub fn get_jubjub_point(&mut self, name: &String) -> Result<AssignedJubjubPoint, Error> {
+    pub fn get_jubjub_point(&mut self, name: &str) -> Result<AssignedJubjubPoint, Error> {
         match self.get(name) {
             Some(CircuitType::JubjubPoint(p)) => Ok(p.clone()),
             _ => Err(Error::Synthesis("".into())),
         }
     }
 
-    pub fn get_jubjub_scalar(&mut self, name: &String) -> Result<AssignedJubjubScalar, Error> {
+    pub fn get_jubjub_scalar(&mut self, name: &str) -> Result<AssignedJubjubScalar, Error> {
         match self.get(name) {
             Some(CircuitType::JubjubScalar(s)) => Ok(s.clone()),
             _ => Err(Error::Synthesis("".into())),

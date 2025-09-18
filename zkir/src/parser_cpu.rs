@@ -1,619 +1,287 @@
 use std::collections::HashMap;
 
-use ff::Field;
+use ff::PrimeField;
 use group::Group;
-use midnight_circuits::{
-    compact_std_lib::{Relation, ZkStdLib, ZkStdLibArch},
-    instructions::*,
-    types::Instantiable,
-};
-use midnight_curves::{JubjubExtended, JubjubSubgroup};
-use midnight_proofs::{
-    circuit::{Layouter, Value},
-    plonk::Error,
-};
+use midnight_circuits::{hash::poseidon::PoseidonChip, instructions::hash::HashCPU};
+use midnight_curves::{Fr as JubjubScalar, JubjubAffine, JubjubExtended, JubjubSubgroup};
 
 use crate::{
     instructions::Instruction as I,
     types::{
-        get_bit, get_byte, get_bytes, get_jubjub_point, get_jubjub_scalar, get_native, parse_bit,
-        parse_byte, parse_bytes, parse_native, type_of, CircuitType, OffCircuitType, ValType,
+        get_bit, get_bytes, get_jubjub_point, get_jubjub_scalar, get_native, parse_bit, parse_byte,
+        parse_bytes, parse_native, OffCircuitType, ValType,
     },
-    IrSource,
 };
 
 type F = midnight_curves::Fq;
 
-type AssignedBit = midnight_circuits::types::AssignedBit<F>;
-type AssignedByte = midnight_circuits::types::AssignedByte<F>;
-type AssignedNative = midnight_circuits::types::AssignedNative<F>;
-type AssignedJubjubPoint = midnight_circuits::types::AssignedNativePoint<JubjubExtended>;
-type AssignedJubjubScalar = midnight_circuits::types::AssignedScalarOfNativeCurve<JubjubExtended>;
-
-pub(crate) struct ParserCPU<'a> {
-    std_lib: &'a ZkStdLib,
-    memory: HashMap<String, CircuitType>,
+pub fn type_of(v: &OffCircuitType) -> ValType {
+    match v {
+        OffCircuitType::Bit(_) => ValType::Bit,
+        OffCircuitType::Byte(_) => ValType::Byte,
+        OffCircuitType::Bytes(v) => ValType::Bytes(v.len()),
+        OffCircuitType::Native(_) => ValType::Native,
+        OffCircuitType::JubjubPoint(_) => ValType::JubjubPoint,
+        OffCircuitType::JubjubScalar(_) => ValType::JubjubScalar,
+    }
 }
 
-impl<'a> ParserCPU<'a> {
-    fn new(std_lib: &'a ZkStdLib) -> Self {
+pub(crate) struct ParserCPU {
+    memory: HashMap<String, OffCircuitType>,
+    public_inputs: Vec<OffCircuitType>,
+}
+
+impl ParserCPU {
+    fn new(witness: HashMap<&'static str, OffCircuitType>) -> Self {
         Self {
-            std_lib,
-            memory: HashMap::new(),
+            memory: witness.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            public_inputs: vec![],
         }
     }
 
-    pub fn insert(&mut self, name: &str, value: &CircuitType) -> Result<(), Error> {
-        self.memory.insert(name.to_owned(), value.clone()).map_or(Ok(()), |_| {
-            Err(Error::Synthesis(format!(
-                "variable {} already exists",
-                name
-            )))
-        })
+    pub fn insert(&mut self, name: &str, value: impl Into<OffCircuitType>) {
+        assert!(
+            self.memory.insert(name.to_owned(), value.into()).is_none(),
+            "variable already exists"
+        );
     }
 
-    pub fn insert_many(&mut self, names: &[String], values: &[CircuitType]) -> Result<(), Error> {
-        if names.len() != values.len() {
-            return Err(Error::Synthesis("".into()));
-        }
-        (names.iter().zip(values.iter())).try_for_each(|(name, value)| self.insert(name, value))
-    }
-
-    pub fn get(&self, name: &str) -> Option<CircuitType> {
-        self.memory.get(name).cloned()
+    pub fn get(&self, name: &str) -> OffCircuitType {
+        self.memory.get(name).cloned().expect("variable not found")
     }
 
     /// Returns the type of the variables associated with the given names.
     /// Names that do not appear in memory (supposedly corresponding to
     /// hard-coded constants) are skipped.
     ///
-    /// Results in an error if non-skipped names have inconsistent types or if
-    /// all of them are skipped (thus no type can be inferred).
-    pub fn infer_type(&self, names: &[String]) -> Result<ValType, Error> {
+    /// # Panics
+    ///
+    /// If non-skipped names have inconsistent types or if all of them are
+    /// skipped (thus no type can be inferred).
+    pub fn infer_type(&self, names: &[String]) -> ValType {
         let mut inferred_type = None;
         for name in names.iter() {
-            if let Some(v) = self.get(name) {
-                let t = inferred_type.get_or_insert_with(|| type_of(&v));
-                if &type_of(&v) != t {
-                    return Err(Error::Synthesis("".into()));
+            if let Some(v) = self.memory.get(name) {
+                let t = inferred_type.get_or_insert_with(|| type_of(v));
+                if &type_of(v) != t {
+                    panic!("");
                 }
             }
         }
-        inferred_type.ok_or(Error::Synthesis(format!(
-            "type {:?} not be inferred",
-            names
-        )))
+        inferred_type.expect("type could not be inferred")
     }
 
-    /// Parses the given name as a constant of the given type and assigns it
-    /// in-circuit as a fixed value.
-    pub fn assign_constant(
-        &mut self,
-        layouter: &mut impl Layouter<F>,
-        val_t: ValType,
-        name: &str,
-    ) -> Result<(), Error> {
+    /// Parses the given name as a constant of the given type and adds it to the
+    /// memory.
+    pub fn load_constant(&mut self, val_t: ValType, str: &str) {
         match val_t {
-            ValType::Bit => {
-                let bit_val = parse_bit(name).ok_or(Error::Synthesis("".into()))?;
-                let bit = self.std_lib.assign_fixed(layouter, bit_val)?;
-                self.insert(name, &CircuitType::Bit(bit))
-            }
-            ValType::Byte => {
-                let byte_val = parse_byte(name).ok_or(Error::Synthesis("".into()))?;
-                let byte = self.std_lib.assign_fixed(layouter, byte_val)?;
-                self.insert(name, &CircuitType::Byte(byte))
-            }
+            ValType::Bit => self.insert(str, parse_bit(str).expect("0 or 1")),
+            ValType::Byte => self.insert(str, parse_byte(str).expect("byte")),
             ValType::Bytes(n) => {
-                let byte_vals = parse_bytes(name).ok_or(Error::Synthesis("".into()))?;
-                let bytes = self.std_lib.assign_many_fixed(layouter, &byte_vals)?;
-                if bytes.len() != n {
-                    return Err(Error::Synthesis(format!(
-                        "expected {} bytes, {} given",
-                        n,
-                        bytes.len()
-                    )));
-                }
-                self.insert(name, &CircuitType::Bytes(bytes))
+                let bytes = parse_bytes(str).expect("bytes");
+                assert_eq!(bytes.len(), n);
+                self.insert(str, bytes)
             }
-            ValType::Native => {
-                let x_val = parse_native(name).ok_or(Error::Synthesis("".into()))?;
-                let x = self.std_lib.assign_fixed(layouter, x_val)?;
-                self.insert(name, &CircuitType::Native(x))
-            }
+            ValType::Native => self.insert(str, parse_native(str).expect("native")),
             ValType::JubjubPoint => {
-                let p_val = match name {
+                let p = match str {
                     "Jubjub::GENERATOR" => JubjubSubgroup::generator(),
                     _ => todo!(),
                 };
-                let p = self.std_lib.jubjub().assign_fixed(layouter, p_val)?;
-                self.insert(name, &CircuitType::JubjubPoint(p))
+                self.insert(str, p)
             }
             ValType::JubjubScalar => todo!(),
         }
     }
 
-    /// Takes a list of names and parses those that are do not appear in the
-    /// memory as constants of the given type. It assigns them in-circuit as
-    /// fixed values.
-    pub fn assign_constants(
-        &mut self,
-        layouter: &mut impl Layouter<F>,
-        val_t: ValType,
-        names: &[String],
-    ) -> Result<(), Error> {
+    /// Takes a list of names and parses as constants (of the given type) those
+    /// that are do not appear in the memory. It adds them to the memory.
+    pub fn load_constants(&mut self, val_t: ValType, names: &[String]) {
         for name in names.iter() {
-            if self.get(name).is_none() {
-                self.assign_constant(layouter, val_t, name)?;
+            if !self.memory.contains_key(name) {
+                self.load_constant(val_t, name);
             }
         }
-        Ok(())
     }
 }
 
-fn public_inputs(
+/// TODO
+pub fn public_inputs(
     witness: HashMap<&'static str, OffCircuitType>,
-) -> Result<Vec<OffCircuitType>, Error> {
-    let parser = &mut ParserCPU::new(std_lib);
+    instructions: &[I],
+) -> Vec<OffCircuitType> {
+    let mut parser = ParserCPU::new(witness);
 
-    for instruction in self.instructions.iter() {
+    for instruction in instructions.iter() {
         match instruction {
-            I::Load { val_t, names } => load(parser, layouter, val_t, names, &witness),
-            I::Publish { vals } => publish(parser, layouter, vals),
-            I::AssertEqual { vals } => assert_equal(parser, layouter, vals),
-            I::IsEqual { vals, output } => is_equal(parser, layouter, vals, output),
-            I::Add { vals, output } => add(parser, layouter, vals, output),
-            I::Mul { vals, output } => mul(parser, layouter, vals, output),
-            I::Neg { val, output } => neg(parser, layouter, val, output),
-            I::Not { val, output } => not(parser, layouter, val, output),
+            I::Load { val_t, names } => load(&parser, val_t, names),
+            I::Publish { vals } => publish(&mut parser, vals),
+            I::AssertEqual { vals } => assert_equal(&mut parser, vals),
+            I::IsEqual { vals, output } => is_equal(&mut parser, vals, output),
+            I::Add { vals, output } => add(&mut parser, vals, output),
+            I::Mul { vals, output } => mul(&mut parser, vals, output),
+            I::Neg { val, output } => neg(&mut parser, val, output),
             I::Msm {
                 bases,
                 scalars,
                 output,
-            } => msm(parser, layouter, bases, scalars, output),
-            I::AffineCoordinates { val, output } => {
-                affine_coordinates(parser, layouter, val, output)
-            }
-            I::Select { cond, vals, output } => select(parser, layouter, cond, vals, output),
+            } => msm(&mut parser, bases, scalars, output),
+            I::AffineCoordinates { val, output } => affine_coordinates(&mut parser, val, output),
+            I::Select { cond, vals, output } => select(&mut parser, cond, vals, output),
             I::IntoBytes {
                 val,
                 nb_bytes,
                 output,
-            } => into_bytes(parser, layouter, val, *nb_bytes as usize, output),
+            } => into_bytes(&mut parser, val, *nb_bytes as usize, output),
             I::FromBytes {
                 val_t,
                 bytes,
                 output,
-            } => from_bytes(parser, layouter, val_t, bytes, output),
-            I::Poseidon { vals, output } => poseidon(parser, layouter, vals, output),
-        }?
+            } => from_bytes(&mut parser, val_t, bytes, output),
+            I::Poseidon { vals, output } => poseidon(&mut parser, vals, output),
+        };
     }
+
+    parser.public_inputs
 }
 
-fn load(
-    parser: &mut Parser,
-    layouter: &mut impl Layouter<F>,
-    val_t: &ValType,
-    names: &[String],
-    witness: &Value<HashMap<&'static str, OffCircuitType>>,
-) -> Result<(), Error> {
-    let std = parser.std_lib;
-    match val_t {
-        ValType::Bit => {
-            let vals = witness
-                .as_ref()
-                .map(|m| names.iter().map(|name| get_bit(m, name)).collect::<Vec<_>>());
-            let bits = std.assign_many(layouter, &vals.transpose_vec(names.len()))?;
-            let bits = bits.into_iter().map(CircuitType::Bit).collect::<Vec<_>>();
-            parser.insert_many(names, &bits)
-        }
-        ValType::Byte => {
-            let vals = witness
-                .as_ref()
-                .map(|m| names.iter().map(|name| get_byte(m, name)).collect::<Vec<_>>());
-            let bytes = std.assign_many(layouter, &vals.transpose_vec(names.len()))?;
-            let bytes = bytes.into_iter().map(CircuitType::Byte).collect::<Vec<_>>();
-            parser.insert_many(names, &bytes)
-        }
-        ValType::Bytes(n) => {
-            let vals = witness
-                .as_ref()
-                .map(|m| names.iter().flat_map(|name| get_bytes(m, name, *n)).collect::<Vec<_>>());
-            let flatten_bytes = std.assign_many(layouter, &vals.transpose_vec(names.len() * *n))?;
-            let chunks = flatten_bytes
-                .chunks(*n)
-                .map(|chunk| CircuitType::Bytes(chunk.to_vec()))
-                .collect::<Vec<_>>();
-            parser.insert_many(names, &chunks)
-        }
-        ValType::Native => {
-            let vals = witness
-                .as_ref()
-                .map(|m| names.iter().map(|name| get_native(m, name)).collect::<Vec<_>>());
-            let xs = std.assign_many(layouter, &vals.transpose_vec(names.len()))?;
-            let xs = xs.into_iter().map(CircuitType::Native).collect::<Vec<_>>();
-            parser.insert_many(names, &xs)
-        }
-        ValType::JubjubPoint => {
-            let vals = witness
-                .as_ref()
-                .map(|m| names.iter().map(|name| get_jubjub_point(m, name)).collect::<Vec<_>>());
-            let points = std.jubjub().assign_many(layouter, &vals.transpose_vec(names.len()))?;
-            let points = points.into_iter().map(CircuitType::JubjubPoint).collect::<Vec<_>>();
-            parser.insert_many(names, &points)
-        }
-        ValType::JubjubScalar => {
-            let vals = witness
-                .as_ref()
-                .map(|m| names.iter().map(|name| get_jubjub_scalar(m, name)).collect::<Vec<_>>());
-            let scalars = std.jubjub().assign_many(layouter, &vals.transpose_vec(names.len()))?;
-            let scalars = scalars.into_iter().map(CircuitType::JubjubScalar).collect::<Vec<_>>();
-            parser.insert_many(names, &scalars)
-        }
-    }
+fn load(parser: &ParserCPU, val_t: &ValType, names: &[String]) {
+    assert_eq!(val_t, &parser.infer_type(names))
 }
 
-fn publish(
-    parser: &mut Parser,
-    layouter: &mut impl Layouter<F>,
-    vals: &[String],
-) -> Result<(), Error> {
-    for v in vals.iter() {
-        match parser.infer_type(std::slice::from_ref(v))? {
-            ValType::Bit => {
-                let b = parser.get_bit(v)?;
-                parser.std_lib.constrain_as_public_input(layouter, &b)
-            }
-            ValType::Byte => {
-                let b = parser.get_byte(v)?;
-                parser.std_lib.constrain_as_public_input(layouter, &b)
-            }
-            ValType::Bytes(n) => {
-                let bytes = parser.get_bytes(v, n)?;
-                (bytes.iter())
-                    .try_for_each(|b| parser.std_lib.constrain_as_public_input(layouter, b))
-            }
-            ValType::Native => {
-                let x = parser.get_native(v)?;
-                parser.std_lib.constrain_as_public_input(layouter, &x)
-            }
-            ValType::JubjubPoint => {
-                let p = parser.get_jubjub_point(v)?;
-                parser.std_lib.jubjub().constrain_as_public_input(layouter, &p)
-            }
-            ValType::JubjubScalar => {
-                let s = parser.get_jubjub_scalar(v)?;
-                parser.std_lib.jubjub().constrain_as_public_input(layouter, &s)
-            }
-        }?;
-    }
-    Ok(())
+fn publish(parser: &mut ParserCPU, vals: &[String]) {
+    vals.iter().for_each(|v| parser.public_inputs.push(parser.get(v)))
 }
 
-fn assert_equal(
-    parser: &mut Parser,
-    layouter: &mut impl Layouter<F>,
-    (x, y): &(String, String),
-) -> Result<(), Error> {
-    let val_t = parser.infer_type(&[x.into(), y.into()])?;
-    parser.assign_constants(layouter, val_t, &[x.into(), y.into()])?;
-
-    match val_t {
-        ValType::Bit => {
-            parser.std_lib.assert_equal(layouter, &parser.get_bit(x)?, &parser.get_bit(y)?)
-        }
-        ValType::Byte => {
-            parser
-                .std_lib
-                .assert_equal(layouter, &parser.get_byte(x)?, &parser.get_byte(y)?)
-        }
-        ValType::Bytes(n) => {
-            let x_bytes = parser.get_bytes(x, n)?;
-            let y_bytes = parser.get_bytes(y, n)?;
-            (x_bytes.iter().zip(y_bytes.iter()))
-                .try_for_each(|(x, y)| parser.std_lib.assert_equal(layouter, x, y))
-        }
-        ValType::Native => {
-            parser
-                .std_lib
-                .assert_equal(layouter, &parser.get_native(x)?, &parser.get_native(y)?)
-        }
-        ValType::JubjubPoint => parser.std_lib.jubjub().assert_equal(
-            layouter,
-            &parser.get_jubjub_point(x)?,
-            &parser.get_jubjub_point(y)?,
-        ),
-        ValType::JubjubScalar => panic!("assert_equal is not supported on Jubjub scalars"),
-    }
+fn assert_equal(parser: &mut ParserCPU, (x, y): &(String, String)) {
+    let val_t = parser.infer_type(&[x.into(), y.into()]);
+    parser.load_constants(val_t, &[x.into(), y.into()]);
+    assert_eq!(parser.get(x), parser.get(y));
 }
 
-fn is_equal(
-    parser: &mut Parser,
-    layouter: &mut impl Layouter<F>,
-    (x, y): &(String, String),
-    output: &str,
-) -> Result<(), Error> {
-    let val_t = parser.infer_type(&[x.into(), y.into()])?;
-    parser.assign_constants(layouter, val_t, &[x.into(), y.into()])?;
-
-    let b = match val_t {
-        ValType::Bit => parser.std_lib.is_equal(layouter, &parser.get_bit(x)?, &parser.get_bit(y)?),
-        ValType::Byte => {
-            parser.std_lib.is_equal(layouter, &parser.get_byte(x)?, &parser.get_byte(y)?)
-        }
-        ValType::Bytes(n) => {
-            let x_bytes = parser.get_bytes(x, n)?;
-            let y_bytes = parser.get_bytes(x, n)?;
-            let bits: Vec<_> = (x_bytes.iter().zip(y_bytes.iter()))
-                .map(|(x, y)| parser.std_lib.is_equal(layouter, x, y))
-                .collect::<Result<_, Error>>()?;
-            parser.std_lib.and(layouter, &bits)
-        }
-        ValType::Native => {
-            parser
-                .std_lib
-                .is_equal(layouter, &parser.get_native(x)?, &parser.get_native(y)?)
-        }
-        ValType::JubjubPoint => parser.std_lib.jubjub().is_equal(
-            layouter,
-            &parser.get_jubjub_point(x)?,
-            &parser.get_jubjub_point(y)?,
-        ),
-        ValType::JubjubScalar => panic!("is_equal is not supported on Jubjub scalars"),
-    }?;
-
-    parser.insert(output, &CircuitType::Bit(b))
+fn is_equal(parser: &mut ParserCPU, (x, y): &(String, String), output: &str) {
+    let val_t = parser.infer_type(&[x.into(), y.into()]);
+    parser.load_constants(val_t, &[x.into(), y.into()]);
+    parser.insert(output, parser.get(x) == parser.get(y));
 }
 
-fn add(
-    parser: &mut Parser,
-    layouter: &mut impl Layouter<F>,
-    vals: &[String],
-    output: &str,
-) -> Result<(), Error> {
-    let val_t = parser.infer_type(vals)?;
-    parser.assign_constants(layouter, val_t, vals)?;
+fn add(parser: &mut ParserCPU, vals: &[String], output: &str) {
+    let val_t = parser.infer_type(vals);
+    parser.load_constants(val_t, vals);
     match val_t {
         ValType::Native => {
-            let mut terms = vec![];
-            for name in vals {
-                terms.push((F::ONE, parser.get_native(name)?))
-            }
-            let r = (parser.std_lib).linear_combination(layouter, &terms, F::ZERO)?;
-            parser.insert(output, &CircuitType::Native(r))
+            let r: F = vals.iter().map(|v| get_native(&parser.memory, v)).sum();
+            parser.insert(output, r)
         }
-        t => Err(Error::Synthesis(format!("add unsupported: {:?}", t))),
+        t => panic!("add unsupported on {:?}", t),
     }
 }
 
-fn mul(
-    parser: &mut Parser,
-    layouter: &mut impl Layouter<F>,
-    vals: &[String],
-    output: &str,
-) -> Result<(), Error> {
-    if vals.is_empty() {
-        return Err(Error::Synthesis("mul expects at least one variable".into()));
-    }
-
-    let val_t = parser.infer_type(vals)?;
-    parser.assign_constants(layouter, val_t, vals)?;
-
+fn mul(parser: &mut ParserCPU, vals: &[String], output: &str) {
+    let val_t = parser.infer_type(vals);
+    parser.load_constants(val_t, vals);
     match val_t {
         ValType::Native => {
-            let mut acc = parser.get_native(&vals[0])?;
-            for name in vals.iter().skip(1) {
-                acc = (parser.std_lib).mul(layouter, &acc, &parser.get_native(name)?, None)?;
-            }
-            parser.insert(output, &CircuitType::Native(acc))
+            let r: F = vals.iter().map(|v| get_native(&parser.memory, v)).product();
+            parser.insert(output, r)
         }
-        t => Err(Error::Synthesis(format!("mul unsupported: {:?}", t))),
+        t => panic!("mul unsupported on {:?}", t),
     }
 }
 
-fn neg(
-    parser: &mut Parser,
-    layouter: &mut impl Layouter<F>,
-    val: &String,
-    output: &str,
-) -> Result<(), Error> {
-    match parser.infer_type(&[val.into()])? {
-        ValType::Native => {
-            let r = parser.std_lib.neg(layouter, &parser.get_native(val)?)?;
-            parser.insert(output, &CircuitType::Native(r))
-        }
-        t => Err(Error::Synthesis(format!("neg unsupported: {:?}", t))),
-    }
-}
-
-fn not(
-    parser: &mut Parser,
-    layouter: &mut impl Layouter<F>,
-    val: &String,
-    output: &str,
-) -> Result<(), Error> {
-    match parser.infer_type(&[val.into()])? {
-        ValType::Bit => {
-            let b = parser.std_lib.not(layouter, &parser.get_bit(val)?)?;
-            parser.insert(output, &CircuitType::Bit(b))
-        }
-        t => Err(Error::Synthesis(format!("not unsupported: {:?}", t))),
+fn neg(parser: &mut ParserCPU, val: &String, output: &str) {
+    match parser.infer_type(std::slice::from_ref(val)) {
+        ValType::Native => parser.insert(output, -get_native(&parser.memory, val)),
+        ValType::Bit => parser.insert(output, !get_bit(&parser.memory, val)),
+        t => panic!("neg unsupported on {:?}", t),
     }
 }
 
 /// # Panics
 ///
 /// If `|bases| != |scalars|`.
-fn msm(
-    parser: &mut Parser,
-    layouter: &mut impl Layouter<F>,
-    bases: &[String],
-    scalars: &[String],
-    output: &str,
-) -> Result<(), Error> {
-    if bases.len() != scalars.len() {
-        return Err(Error::Synthesis(format!(
-            "|bases| != |scalars| ({:?} vs {:?})",
-            bases.len(),
-            scalars.len()
-        )));
-    }
+fn msm(parser: &mut ParserCPU, bases: &[String], scalars: &[String], output: &str) {
+    assert_eq!(bases.len(), scalars.len());
 
-    let bases_t = parser.infer_type(bases)?;
-    let scalars_t = parser.infer_type(scalars)?;
-    parser.assign_constants(layouter, bases_t, bases)?;
-    parser.assign_constants(layouter, scalars_t, scalars)?;
+    let bases_t = parser.infer_type(bases);
+    let scalars_t = parser.infer_type(scalars);
+    parser.load_constants(bases_t, bases);
+    parser.load_constants(scalars_t, scalars);
 
     match (bases_t, scalars_t) {
         (ValType::JubjubPoint, ValType::JubjubScalar) => {
-            let bases = bases
-                .iter()
-                .map(|b| parser.get_jubjub_point(b))
-                .collect::<Result<Vec<_>, Error>>()?;
-            let scalars = scalars
-                .iter()
-                .map(|s| parser.get_jubjub_scalar(s))
-                .collect::<Result<Vec<_>, Error>>()?;
-            let p = parser.std_lib.jubjub().msm(layouter, &scalars, &bases)?;
-            parser.insert(output, &CircuitType::JubjubPoint(p))
+            let bases: Vec<_> = bases.iter().map(|b| get_jubjub_point(&parser.memory, b)).collect();
+            let scalars: Vec<_> =
+                scalars.iter().map(|s| get_jubjub_scalar(&parser.memory, s)).collect();
+            let p: JubjubSubgroup = bases.into_iter().zip(scalars).map(|(b, s)| b * s).sum();
+            parser.insert(output, p)
         }
-        _ => Err(Error::Synthesis(format!(
-            "msm invalid input types( bases: {:?}, scalars: {:?} )",
-            bases_t, scalars_t
-        ))),
+        t => panic!("msm unsupported on {:?}", t),
     }
 }
 
 fn affine_coordinates(
-    parser: &mut Parser,
-    _layouter: &mut impl Layouter<F>,
+    parser: &mut ParserCPU,
     input: &String,
     (x_output, y_output): &(String, String),
-) -> Result<(), Error> {
-    match parser.infer_type(&[input.into()])? {
+) {
+    match parser.infer_type(std::slice::from_ref(input)) {
         ValType::JubjubPoint => {
-            let p = parser.get_jubjub_point(input)?;
-            let x = parser.std_lib.jubjub().x_coordinate(&p);
-            let y = parser.std_lib.jubjub().y_coordinate(&p);
-            parser.insert(x_output, &CircuitType::Native(x))?;
-            parser.insert(y_output, &CircuitType::Native(y))
+            let p = get_jubjub_point(&parser.memory, input);
+            let p: JubjubExtended = p.into();
+            let p: JubjubAffine = p.into();
+            parser.insert(x_output, p.get_u());
+            parser.insert(y_output, p.get_v())
         }
-        t => Err(Error::Synthesis(format!(
-            "affine_coordinates: invalid input type {:?}",
-            t
-        ))),
+        t => panic!("affine_coordinates unsupported on {:?}", t),
     }
 }
 
-fn select(
-    parser: &mut Parser,
-    layouter: &mut impl Layouter<F>,
-    cond: &String,
-    (x, y): &(String, String),
-    output: &str,
-) -> Result<(), Error> {
-    let val_t = parser.infer_type(&[x.into(), y.into()])?;
-    parser.assign_constants(layouter, val_t, &[x.into(), y.into()])?;
+fn select(parser: &mut ParserCPU, cond: &str, (x, y): &(String, String), output: &str) {
+    let val_t = parser.infer_type(&[x.into(), y.into()]);
+    parser.load_constants(val_t, &[x.into(), y.into()]);
 
-    let cond = parser.get_bit(cond)?;
+    let z = if get_bit(&parser.memory, cond) { x } else { y };
+    parser.insert(output, parser.get(z));
+}
 
-    match val_t {
-        ValType::Bit => {
-            let x = parser.get_bit(x)?;
-            let y = parser.get_bit(y)?;
-            let z = parser.std_lib.select(layouter, &cond, &x, &y)?;
-            parser.insert(output, &CircuitType::Bit(z))
-        }
-        ValType::Byte => {
-            let x = parser.get_byte(x)?;
-            let y = parser.get_byte(y)?;
-            let z = parser.std_lib.select(layouter, &cond, &x, &y)?;
-            parser.insert(output, &CircuitType::Byte(z))
-        }
-        ValType::Bytes(n) => {
-            let x_bytes = parser.get_bytes(x, n)?;
-            let y_bytes = parser.get_bytes(y, n)?;
-            let z_bytes = (x_bytes.into_iter().zip(y_bytes.into_iter()))
-                .map(|(x, y)| parser.std_lib.select(layouter, &cond, &x, &y))
-                .collect::<Result<Vec<_>, Error>>()?;
-            parser.insert(output, &CircuitType::Bytes(z_bytes))
-        }
+fn into_bytes(parser: &mut ParserCPU, input: &String, nb_bytes: usize, output: &str) {
+    match parser.infer_type(std::slice::from_ref(input)) {
         ValType::Native => {
-            let x = parser.get_native(x)?;
-            let y = parser.get_native(y)?;
-            let z = parser.std_lib.select(layouter, &cond, &x, &y)?;
-            parser.insert(output, &CircuitType::Native(z))
+            let bytes = get_native(&parser.memory, input).to_bytes_le();
+            assert!(nb_bytes <= F::NUM_BITS.div_ceil(8) as usize);
+            assert!(bytes[nb_bytes..].iter().all(|&b| b == 0));
+            parser.insert(output, bytes[..nb_bytes].to_vec())
         }
-        ValType::JubjubPoint => {
-            let x = parser.get_jubjub_point(x)?;
-            let y = parser.get_jubjub_point(y)?;
-            let z = parser.std_lib.jubjub().select(layouter, &cond, &x, &y)?;
-            parser.insert(output, &CircuitType::JubjubPoint(z))
-        }
-        ValType::JubjubScalar => panic!("select is not supported on Jubjub scalars"),
+        t => panic!("into_bytes unsupported on {:?}", t),
     }
 }
 
-fn into_bytes(
-    parser: &mut Parser,
-    layouter: &mut impl Layouter<F>,
-    input: &String,
-    nb_bytes: usize,
-    output: &str,
-) -> Result<(), Error> {
-    match parser.infer_type(std::slice::from_ref(input))? {
-        ValType::Native => {
-            let x = parser.get_native(input)?;
-            let bytes = parser.std_lib.assigned_to_le_bytes(layouter, &x, Some(nb_bytes))?;
-            parser.insert(output, &CircuitType::Bytes(bytes))
-        }
-        t => Err(Error::Synthesis(format!(
-            "into_bytes is unsupported on {:?}",
-            t
-        ))),
-    }
-}
-
-fn from_bytes(
-    parser: &mut Parser,
-    layouter: &mut impl Layouter<F>,
-    val_t: &ValType,
-    bytes_name: &String,
-    output: &str,
-) -> Result<(), Error> {
-    let n = match parser.infer_type(&[bytes_name.into()])? {
+fn from_bytes(parser: &mut ParserCPU, val_t: &ValType, bytes_name: &String, output: &str) {
+    let n = match parser.infer_type(std::slice::from_ref(bytes_name)) {
         ValType::Bytes(n) => n,
         _ => panic!("TODO"),
     };
-    let bytes = parser.get_bytes(bytes_name, n)?;
+    let bytes = get_bytes(&parser.memory, bytes_name, n);
 
     match val_t {
         ValType::Native => {
-            let x = parser.std_lib.assigned_from_le_bytes(layouter, &bytes)?;
-            parser.insert(output, &CircuitType::Native(x))
+            let mut buff = vec![0u8; F::NUM_BITS.div_ceil(8) as usize];
+            buff[..bytes.len()].copy_from_slice(&bytes);
+            let x = F::from_bytes_le(&buff.try_into().unwrap()).unwrap();
+            parser.insert(output, x)
         }
         ValType::JubjubScalar => {
-            let x = parser.std_lib.jubjub().scalar_from_le_bytes(layouter, &bytes)?;
-            parser.insert(output, &CircuitType::JubjubScalar(x))
+            let mut buff = [0u8; 64];
+            buff[..bytes.len()].copy_from_slice(&bytes);
+            let s = JubjubScalar::from_bytes_wide(&buff);
+            parser.insert(output, s)
         }
-        t => Err(Error::Synthesis(format!(
-            "from_bytes is unsupported on {:?}",
-            t
-        ))),
+        t => panic!("from_bytes unsupported on {:?}", t),
     }
 }
 
-fn poseidon(
-    parser: &mut Parser,
-    layouter: &mut impl Layouter<F>,
-    inputs: &[String],
-    output: &str,
-) -> Result<(), Error> {
-    let xs = inputs
-        .iter()
-        .map(|name| parser.get_native(name))
-        .collect::<Result<Vec<_>, Error>>()?;
-
-    let h = parser.std_lib.poseidon(layouter, &xs)?;
-    parser.insert(output, &CircuitType::Native(h))
+fn poseidon(parser: &mut ParserCPU, inputs: &[String], output: &str) {
+    let xs: Vec<_> = inputs.iter().map(|name| get_native(&parser.memory, name)).collect();
+    parser.insert(output, <PoseidonChip<F> as HashCPU<F, F>>::hash(&xs))
 }

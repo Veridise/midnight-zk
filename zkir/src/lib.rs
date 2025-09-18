@@ -12,6 +12,7 @@ mod instructions;
 mod parser;
 mod parser_cpu;
 mod types;
+mod zkir;
 
-pub use instructions::IrSource;
 pub use types::OffCircuitType;
+pub use zkir::IrSource;

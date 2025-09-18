@@ -36,15 +36,12 @@ fn main() {
     let pk = compact_std_lib::setup_pk(&ir, &vk);
 
     let instance = vec![];
-    let witness = HashMap::from_iter(
-        [
-            ("v0".into(), OffCircuitType::Native(F::from(1))),
-            ("v1".into(), OffCircuitType::Native(-F::from(2))),
-            ("b0".into(), OffCircuitType::Bit(true)),
-            ("B0".into(), OffCircuitType::Byte(0xFA)),
-        ]
-        .into_iter(),
-    );
+    let witness = HashMap::from_iter([
+        ("v0", OffCircuitType::Native(F::from(1))),
+        ("v1", OffCircuitType::Native(-F::from(2))),
+        ("b0", OffCircuitType::Bit(true)),
+        ("B0", OffCircuitType::Byte(0xFA)),
+    ]);
 
     let proof = compact_std_lib::prove::<_, Blake2b>(&srs, &pk, &ir, &instance, witness, OsRng)
         .expect("Proof generation should not fail");

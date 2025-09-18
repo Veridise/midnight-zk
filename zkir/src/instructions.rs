@@ -2,25 +2,6 @@ use serde::Deserialize;
 
 use crate::types::ValType;
 
-/// TODO
-#[derive(Clone, Debug, Deserialize)]
-pub struct IrSource {
-    pub(crate) instructions: Vec<Instruction>,
-}
-
-impl IrSource {
-    /// Read an IrSource from JSON.
-    pub fn read(raw: &'static str) -> Self {
-        let ir: Self = serde_json::from_str(raw).unwrap();
-        ir
-        // IrSource {
-        //     num_inputs: ir.num_inputs,
-        //     // instructions: optimize_instructions(&ir.instructions),
-        //     instructions: ir.instructions,
-        // }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "op")]
 pub enum Instruction {
@@ -55,10 +36,6 @@ pub enum Instruction {
         val: String,
         output: String,
     },
-    Not {
-        val: String,
-        output: String,
-    },
     Msm {
         bases: Vec<String>,
         scalars: Vec<String>,
@@ -69,18 +46,21 @@ pub enum Instruction {
         output: (String, String),
     },
     /* Control-flow instructions:
-         - Select : cond:Bit -> vals:(T, T) -> T
+         - Select   : cond:Bit -> vals:(T, T) -> T
+         - CondSwap : cond:Bit -> vals:(T, T) -> (T, T)
 
-       where T:
-         - Bit
-         - Byte
-         - Field
+       where T is any type except JubjubScalar.
     */
     Select {
         cond: String,
         vals: (String, String),
         output: String,
     },
+    // CondSwap {
+    //     cond: String,
+    //     inputs: (String, String),
+    //     output: (String, String),
+    // },
     IntoBytes {
         val: String,
         nb_bytes: u32,
