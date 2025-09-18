@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 
 use ff::Field;
+use group::Group;
 use midnight_circuits::{
     compact_std_lib::{Relation, ZkStdLib, ZkStdLibArch},
     instructions::*,
     types::Instantiable,
 };
-use midnight_curves::JubjubExtended;
+use midnight_curves::{JubjubExtended, JubjubSubgroup};
 use midnight_proofs::{
     circuit::{Layouter, Value},
     plonk::Error,
@@ -58,7 +59,7 @@ impl<'a> Parser<'a> {
         (names.iter().zip(values.iter())).try_for_each(|(name, value)| self.insert(name, value))
     }
 
-    pub fn get(&self, name: &String) -> Option<CircuitType> {
+    pub fn get(&self, name: &str) -> Option<CircuitType> {
         self.memory.get(name).cloned()
     }
 
@@ -120,7 +121,14 @@ impl<'a> Parser<'a> {
                 let x = self.std_lib.assign_fixed(layouter, x_val)?;
                 self.insert(name, &CircuitType::Native(x))
             }
-            ValType::JubjubPoint => todo!(),
+            ValType::JubjubPoint => {
+                let p_val = match name {
+                    "Jubjub::GENERATOR" => JubjubSubgroup::generator(),
+                    _ => todo!(),
+                };
+                let p = self.std_lib.jubjub().assign_fixed(layouter, p_val)?;
+                self.insert(name, &CircuitType::JubjubPoint(p))
+            }
             ValType::JubjubScalar => todo!(),
         }
     }
@@ -146,7 +154,7 @@ impl<'a> Parser<'a> {
 impl Relation for IrSource {
     type Instance = Vec<OffCircuitType>;
 
-    type Witness = HashMap<String, OffCircuitType>;
+    type Witness = HashMap<&'static str, OffCircuitType>;
 
     fn format_instance(instance: &Self::Instance) -> Vec<F> {
         instance
@@ -176,6 +184,7 @@ impl Relation for IrSource {
         for instruction in self.instructions.iter() {
             match instruction {
                 I::Load { val_t, names } => load(parser, layouter, val_t, names, &witness),
+                I::Publish { vals } => publish(parser, layouter, vals),
                 I::AssertEqual { vals } => assert_equal(parser, layouter, vals),
                 I::IsEqual { vals, output } => is_equal(parser, layouter, vals, output),
                 I::Add { vals, output } => add(parser, layouter, vals, output),
@@ -187,12 +196,21 @@ impl Relation for IrSource {
                     scalars,
                     output,
                 } => msm(parser, layouter, bases, scalars, output),
+                I::AffineCoordinates { val, output } => {
+                    affine_coordinates(parser, layouter, val, output)
+                }
                 I::Select { cond, vals, output } => select(parser, layouter, cond, vals, output),
+                I::IntoBytes {
+                    val,
+                    nb_bytes,
+                    output,
+                } => into_bytes(parser, layouter, val, *nb_bytes as usize, output),
                 I::FromBytes {
                     val_t,
                     bytes,
                     output,
                 } => from_bytes(parser, layouter, val_t, bytes, output),
+                I::Poseidon { vals, output } => poseidon(parser, layouter, vals, output),
             }?
             // I::Assert { cond } => {
             //     std.assert_equal_to_fixed(layouter, get(&memory, *cond)?,
@@ -367,9 +385,11 @@ impl Relation for IrSource {
     }
 
     fn used_chips(&self) -> ZkStdLibArch {
-        fn loads_type(instruction: &I, target_t: ValType) -> bool {
-            matches!(instruction, I::Load { val_t, .. } if *val_t == target_t)
-        }
+        let loading_type = |target_t: ValType| -> bool {
+            self.instructions
+                .iter()
+                .any(|op| matches!(op, I::Load { val_t, .. } if val_t == &target_t))
+        };
 
         // let hash_to_curve = self
         //     .instructions
@@ -381,10 +401,8 @@ impl Relation for IrSource {
         //     .any(|op| matches!(op, I::TransientHash { .. }));
 
         ZkStdLibArch {
-            jubjub: self.instructions.iter().any(|op| {
-                loads_type(op, ValType::JubjubPoint) || loads_type(op, ValType::JubjubScalar)
-            }),
-            poseidon: false,
+            jubjub: loading_type(ValType::JubjubPoint) || loading_type(ValType::JubjubScalar),
+            poseidon: self.instructions.iter().any(|op| matches!(op, I::Poseidon { .. })),
             sha256: false,
             secp256k1: false,
             bls12_381: false,
@@ -408,7 +426,7 @@ fn load(
     layouter: &mut impl Layouter<F>,
     val_t: &ValType,
     names: &[String],
-    witness: &Value<HashMap<String, OffCircuitType>>,
+    witness: &Value<HashMap<&'static str, OffCircuitType>>,
 ) -> Result<(), Error> {
     let std = parser.std_lib;
     match val_t {
@@ -464,6 +482,43 @@ fn load(
             parser.insert_many(names, &scalars)
         }
     }
+}
+
+fn publish(
+    parser: &mut Parser,
+    layouter: &mut impl Layouter<F>,
+    vals: &[String],
+) -> Result<(), Error> {
+    for v in vals.iter() {
+        match parser.infer_type(std::slice::from_ref(v))? {
+            ValType::Bit => {
+                let b = parser.get_bit(v)?;
+                parser.std_lib.constrain_as_public_input(layouter, &b)
+            }
+            ValType::Byte => {
+                let b = parser.get_byte(v)?;
+                parser.std_lib.constrain_as_public_input(layouter, &b)
+            }
+            ValType::Bytes(n) => {
+                let bytes = parser.get_bytes(v, n)?;
+                (bytes.iter())
+                    .try_for_each(|b| parser.std_lib.constrain_as_public_input(layouter, b))
+            }
+            ValType::Native => {
+                let x = parser.get_native(v)?;
+                parser.std_lib.constrain_as_public_input(layouter, &x)
+            }
+            ValType::JubjubPoint => {
+                let p = parser.get_jubjub_point(v)?;
+                parser.std_lib.jubjub().constrain_as_public_input(layouter, &p)
+            }
+            ValType::JubjubScalar => {
+                let s = parser.get_jubjub_scalar(v)?;
+                parser.std_lib.jubjub().constrain_as_public_input(layouter, &s)
+            }
+        }?;
+    }
+    Ok(())
 }
 
 fn assert_equal(
@@ -660,6 +715,27 @@ fn msm(
     }
 }
 
+fn affine_coordinates(
+    parser: &mut Parser,
+    _layouter: &mut impl Layouter<F>,
+    input: &String,
+    (x_output, y_output): &(String, String),
+) -> Result<(), Error> {
+    match parser.infer_type(&[input.into()])? {
+        ValType::JubjubPoint => {
+            let p = parser.get_jubjub_point(input)?;
+            let x = parser.std_lib.jubjub().x_coordinate(&p);
+            let y = parser.std_lib.jubjub().y_coordinate(&p);
+            parser.insert(x_output, &CircuitType::Native(x))?;
+            parser.insert(y_output, &CircuitType::Native(y))
+        }
+        t => Err(Error::Synthesis(format!(
+            "affine_coordinates: invalid input type {:?}",
+            t
+        ))),
+    }
+}
+
 fn select(
     parser: &mut Parser,
     layouter: &mut impl Layouter<F>,
@@ -709,6 +785,26 @@ fn select(
     }
 }
 
+fn into_bytes(
+    parser: &mut Parser,
+    layouter: &mut impl Layouter<F>,
+    input: &String,
+    nb_bytes: usize,
+    output: &str,
+) -> Result<(), Error> {
+    match parser.infer_type(std::slice::from_ref(input))? {
+        ValType::Native => {
+            let x = parser.get_native(input)?;
+            let bytes = parser.std_lib.assigned_to_le_bytes(layouter, &x, Some(nb_bytes))?;
+            parser.insert(output, &CircuitType::Bytes(bytes))
+        }
+        t => Err(Error::Synthesis(format!(
+            "into_bytes is unsupported on {:?}",
+            t
+        ))),
+    }
+}
+
 fn from_bytes(
     parser: &mut Parser,
     layouter: &mut impl Layouter<F>,
@@ -736,4 +832,19 @@ fn from_bytes(
             t
         ))),
     }
+}
+
+fn poseidon(
+    parser: &mut Parser,
+    layouter: &mut impl Layouter<F>,
+    inputs: &[String],
+    output: &str,
+) -> Result<(), Error> {
+    let xs = inputs
+        .iter()
+        .map(|name| parser.get_native(name))
+        .collect::<Result<Vec<_>, Error>>()?;
+
+    let h = parser.std_lib.poseidon(layouter, &xs)?;
+    parser.insert(output, &CircuitType::Native(h))
 }

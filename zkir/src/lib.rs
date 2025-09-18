@@ -10,6 +10,7 @@ extern crate core;
 
 mod instructions;
 mod parser;
+mod parser_cpu;
 mod types;
 
 pub use instructions::IrSource;

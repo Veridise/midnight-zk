@@ -32,12 +32,18 @@ fn main() {
     let ir_raw = r#"{
         "version": { "major": 3, "minor": 0 },
         "instructions": [
-            { "op": "load", "type": "JubjubPoint", "names": ["pk"] },
+            { "op": "load", "type": "JubjubPoint", "names": ["PK"] },
             { "op": "load", "type": "Field", "names": ["msg"] },
             { "op": "load", "type": "JubjubScalar", "names": ["s"] },
-            { "op": "load", "type": { "Bytes" : 2 }, "names": ["e_bytes"] },
-            { "op": "msm", "bases": ["pk"], "scalars": ["s"], "output": "p" },
-            { "op": "assert_equal", "vals": ["e_bytes", "0xc88f"] }
+            { "op": "load", "type": { "Bytes" : 32 }, "names": ["e_bytes"] },
+            { "op": "publish", "vals": ["msg"] },
+            { "op": "from_bytes", "type": "JubjubScalar", "bytes": "e_bytes", "output": "e" },
+            { "op": "msm", "bases": ["PK", "Jubjub::GENERATOR"], "scalars": ["e", "s"], "output": "R" },
+            { "op": "affine_coordinates", "val": "PK", "output": ["PKx", "PKy"] },
+            { "op": "affine_coordinates", "val": "R", "output": ["Rx", "Ry"] },
+            { "op": "poseidon", "vals": ["PKx", "PKy", "Rx", "Ry", "msg"], "output": "h" },
+            { "op": "into_bytes", "nb_bytes": 32, "val": "h", "output": "h_bytes" },
+            { "op": "assert_equal", "vals": ["e_bytes", "h_bytes" ] }
         ]
     }
     "#;
@@ -49,20 +55,16 @@ fn main() {
     let mut rng = ChaCha8Rng::seed_from_u64(0xf001ba11);
 
     let (pk, sk) = keygen(&mut rng);
-    let m = F::random(&mut rng);
-    let sig = sign(m, &sk, &mut rng);
     let msg = F::random(&mut rng);
+    let sig = sign(msg, &sk, &mut rng);
 
-    let instance = vec![];
+    let instance = vec![OffCircuitType::Native(msg)];
     let witness = HashMap::from_iter(
         [
-            ("pk".into(), OffCircuitType::JubjubPoint(pk)),
-            ("msg".into(), OffCircuitType::Native(msg)),
-            ("s".into(), OffCircuitType::JubjubScalar(sig.s)),
-            (
-                "e_bytes".into(),
-                OffCircuitType::Bytes(sig.e_bytes[..2].to_vec()),
-            ),
+            ("PK", OffCircuitType::JubjubPoint(pk)),
+            ("msg", OffCircuitType::Native(msg)),
+            ("s", OffCircuitType::JubjubScalar(sig.s)),
+            ("e_bytes", OffCircuitType::Bytes(sig.e_bytes.to_vec())),
         ]
         .into_iter(),
     );

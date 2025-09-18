@@ -29,6 +29,10 @@ pub enum Instruction {
         val_t: ValType,
         names: Vec<String>,
     },
+    /// Vals can have different types.
+    Publish {
+        vals: Vec<String>,
+    },
     AssertEqual {
         vals: (String, String),
     },
@@ -60,6 +64,10 @@ pub enum Instruction {
         scalars: Vec<String>,
         output: String,
     },
+    AffineCoordinates {
+        val: String,
+        output: (String, String),
+    },
     /* Control-flow instructions:
          - Select : cond:Bit -> vals:(T, T) -> T
 
@@ -73,103 +81,115 @@ pub enum Instruction {
         vals: (String, String),
         output: String,
     },
+    IntoBytes {
+        val: String,
+        nb_bytes: u32,
+        output: String,
+    },
     FromBytes {
+        #[serde(rename = "type")]
         val_t: ValType,
         bytes: String,
         output: String,
-    }, /*
-        * CondSelect {
-        *     bit: u32,
-        *     a: u32,
-        *     b: u32,
-        * },
-        * CondSwap {
-        *     bit: u32,
-        *     a: u32,
-        *     b: u32,
-        * },
-        * ConstrainBits {
-        *     var: u32,
-        *     bits: u32,
-        * },
-        * ConstrainEq {
-        *     a: u32,
-        *     b: u32,
-        * },
-        * ConstrainToBoolean {
-        *     var: u32,
-        * },
-        * ConstrainToBooleanMany {
-        *     vars: Vec<u32>,
-        * },
-        * ConstrainToByteMany {
-        *     vars: Vec<u32>,
-        * },
-        * Copy {
-        *     var: u32,
-        * },
-        * DeclarePubInput {
-        *     var: u32,
-        * },
-        * PiSkip {
-        *     guard: Option<u32>,
-        *     count: u32,
-        * },
-        * EcAdd {
-        *     a_x: u32,
-        *     a_y: u32,
-        *     b_x: u32,
-        *     b_y: u32,
-        * },
-        * EcMul {
-        *     a_x: u32,
-        *     a_y: u32,
-        *     scalar: u32,
-        * },
-        * EcMulGenerator {
-        *     scalar: u32,
-        * },
-        * HashToCurve {
-        *     inputs: Vec<u32>,
-        * },
-        * LoadImm {
-        *     #[serde(deserialize_with = "field_deser")]
-        *     imm: F,
-        * },
-        * DivModPowerOfTwo {
-        *     var: u32,
-        *     bits: u32,
-        * },
-        * ReconstituteField {
-        *     divisor: u32,
-        *     modulus: u32,
-        *     bits: u32,
-        * },
-        * Output {
-        *     var: u32,
-        * },
-        * TransientHash {
-        *     inputs: Vec<u32>,
-        * },
-        * // PersistentHash {
-        * //     alignment: Alignment,
-        * //     inputs: Vec<u32>,
-        * // },
-        * TestEq {
-        *     a: u32,
-        *     b: u32,
-        * },
-        * LessThan {
-        *     a: u32,
-        *     b: u32,
-        *     bits: u32,
-        * },
-        * PublicInput {
-        *     guard: Option<u32>,
-        * },
-        * PrivateInput {
-        *     guard: Option<u32>,
-        * }, */
+    },
+
+    Poseidon {
+        vals: Vec<String>,
+        output: String,
+    },
+    /*
+     * CondSelect {
+     *     bit: u32,
+     *     a: u32,
+     *     b: u32,
+     * },
+     * CondSwap {
+     *     bit: u32,
+     *     a: u32,
+     *     b: u32,
+     * },
+     * ConstrainBits {
+     *     var: u32,
+     *     bits: u32,
+     * },
+     * ConstrainEq {
+     *     a: u32,
+     *     b: u32,
+     * },
+     * ConstrainToBoolean {
+     *     var: u32,
+     * },
+     * ConstrainToBooleanMany {
+     *     vars: Vec<u32>,
+     * },
+     * ConstrainToByteMany {
+     *     vars: Vec<u32>,
+     * },
+     * Copy {
+     *     var: u32,
+     * },
+     * DeclarePubInput {
+     *     var: u32,
+     * },
+     * PiSkip {
+     *     guard: Option<u32>,
+     *     count: u32,
+     * },
+     * EcAdd {
+     *     a_x: u32,
+     *     a_y: u32,
+     *     b_x: u32,
+     *     b_y: u32,
+     * },
+     * EcMul {
+     *     a_x: u32,
+     *     a_y: u32,
+     *     scalar: u32,
+     * },
+     * EcMulGenerator {
+     *     scalar: u32,
+     * },
+     * HashToCurve {
+     *     inputs: Vec<u32>,
+     * },
+     * LoadImm {
+     *     #[serde(deserialize_with = "field_deser")]
+     *     imm: F,
+     * },
+     * DivModPowerOfTwo {
+     *     var: u32,
+     *     bits: u32,
+     * },
+     * ReconstituteField {
+     *     divisor: u32,
+     *     modulus: u32,
+     *     bits: u32,
+     * },
+     * Output {
+     *     var: u32,
+     * },
+     * TransientHash {
+     *     inputs: Vec<u32>,
+     * },
+     * // PersistentHash {
+     * //     alignment: Alignment,
+     * //     inputs: Vec<u32>,
+     * // },
+     * TestEq {
+     *     a: u32,
+     *     b: u32,
+     * },
+     * LessThan {
+     *     a: u32,
+     *     b: u32,
+     *     bits: u32,
+     * },
+     * PublicInput {
+     *     guard: Option<u32>,
+     * },
+     * PrivateInput {
+     *     guard: Option<u32>,
+     * }, */
 }
 
 // fn optimize_instructions(instructions: &[Instruction]) -> Vec<Instruction> {
