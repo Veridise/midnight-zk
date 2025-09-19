@@ -81,8 +81,6 @@ impl Relation for IrSource {
     ) -> Result<(), Error> {
         let parser = &mut Parser::new(std_lib);
 
-        let witness = witness.map(|m| m.into_iter().map(|(k, v)| (k.to_string(), v)).collect());
-
         for instruction in self.instructions.iter() {
             match instruction {
                 I::Load { val_t, names } => load(parser, layouter, val_t, names, &witness),

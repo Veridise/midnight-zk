@@ -1,10 +1,7 @@
-use std::collections::HashMap;
-
 use midnight_curves::{Fr as JubjubScalar, JubjubExtended, JubjubSubgroup};
-use midnight_proofs::plonk::Error;
 use serde::Deserialize;
 
-use crate::parser::Parser;
+use crate::impl_enum_from_try_from;
 
 type F = midnight_curves::Fq;
 
@@ -63,145 +60,33 @@ pub fn type_of(v: &CircuitType) -> ValType {
     }
 }
 
-impl From<bool> for OffCircuitType {
-    fn from(bit: bool) -> Self {
-        OffCircuitType::Bit(bit)
-    }
-}
+// Derives implementations:
+//  - From<T> for OffCircuitType
+//  - From<OffCircuitType> for T
+//
+// for all types T.
+impl_enum_from_try_from!(OffCircuitType {
+    Bit => bool,
+    Byte => u8,
+    Bytes => Vec<u8>,
+    Native => F,
+    JubjubPoint => JubjubSubgroup,
+    JubjubScalar => JubjubScalar,
+});
 
-impl From<u8> for OffCircuitType {
-    fn from(byte: u8) -> Self {
-        OffCircuitType::Byte(byte)
-    }
-}
-
-impl From<Vec<u8>> for OffCircuitType {
-    fn from(bytes: Vec<u8>) -> Self {
-        OffCircuitType::Bytes(bytes)
-    }
-}
-
-impl From<F> for OffCircuitType {
-    fn from(x: F) -> Self {
-        OffCircuitType::Native(x)
-    }
-}
-
-impl From<JubjubSubgroup> for OffCircuitType {
-    fn from(p: JubjubSubgroup) -> Self {
-        OffCircuitType::JubjubPoint(p)
-    }
-}
-
-impl From<JubjubScalar> for OffCircuitType {
-    fn from(s: JubjubScalar) -> Self {
-        OffCircuitType::JubjubScalar(s)
-    }
-}
-
-impl From<AssignedBit> for CircuitType {
-    fn from(bit: AssignedBit) -> Self {
-        CircuitType::Bit(bit)
-    }
-}
-
-pub fn get_bit(memory: &HashMap<String, OffCircuitType>, name: &str) -> bool {
-    match memory.get(name) {
-        Some(OffCircuitType::Bit(bit)) => *bit,
-        Some(_) => panic!("variable {} is not of type Bit", name),
-        None => panic!("variable {} is not in memory", name),
-    }
-}
-
-pub fn get_byte(memory: &HashMap<String, OffCircuitType>, name: &str) -> u8 {
-    match memory.get(name) {
-        Some(OffCircuitType::Byte(byte)) => *byte,
-        Some(_) => panic!("variable {} is not of type Byte", name),
-        None => panic!("variable {} is not in memory", name),
-    }
-}
-
-pub fn get_bytes(memory: &HashMap<String, OffCircuitType>, name: &str, n: usize) -> Vec<u8> {
-    match memory.get(name) {
-        Some(OffCircuitType::Bytes(bytes)) => {
-            assert_eq!(bytes.len(), n);
-            bytes.clone()
-        }
-        Some(_) => panic!("variable {} is not of type Bytes", name),
-        None => panic!("variable {} is not in memory", name),
-    }
-}
-
-pub fn get_native(memory: &HashMap<String, OffCircuitType>, name: &str) -> F {
-    match memory.get(name) {
-        Some(OffCircuitType::Native(x)) => *x,
-        Some(_) => panic!("variable {} is not of type Field", name),
-        None => panic!("variable {} is not in memory", name),
-    }
-}
-
-pub fn get_jubjub_point(memory: &HashMap<String, OffCircuitType>, name: &str) -> JubjubSubgroup {
-    match memory.get(name) {
-        Some(OffCircuitType::JubjubPoint(p)) => *p,
-        Some(_) => panic!("variable {} is not of type JubjubPoint", name),
-        None => panic!("variable {} is not in memory", name),
-    }
-}
-
-pub fn get_jubjub_scalar(memory: &HashMap<String, OffCircuitType>, name: &str) -> JubjubScalar {
-    match memory.get(name) {
-        Some(OffCircuitType::JubjubScalar(s)) => *s,
-        Some(_) => panic!("variable {} is not of type JubjubScalar", name),
-        None => panic!("variable {} is not in memory", name),
-    }
-}
-
-impl<'a> Parser<'a> {
-    pub fn get_bit(&mut self, name: &str) -> Result<AssignedBit, Error> {
-        match self.get(name) {
-            Some(CircuitType::Bit(bit)) => Ok(bit.clone()),
-            _ => Err(Error::Synthesis("".into())),
-        }
-    }
-
-    pub fn get_byte(&mut self, name: &str) -> Result<AssignedByte, Error> {
-        match self.get(name) {
-            Some(CircuitType::Byte(byte)) => Ok(byte.clone()),
-            _ => Err(Error::Synthesis("".into())),
-        }
-    }
-
-    pub fn get_bytes(&mut self, name: &str, n: usize) -> Result<Vec<AssignedByte>, Error> {
-        match self.get(name) {
-            Some(CircuitType::Bytes(bytes)) => {
-                assert_eq!(bytes.len(), n);
-                Ok(bytes.clone())
-            }
-            _ => Err(Error::Synthesis("".into())),
-        }
-    }
-
-    pub fn get_native(&mut self, name: &str) -> Result<AssignedNative, Error> {
-        match self.get(name) {
-            Some(CircuitType::Native(x)) => Ok(x.clone()),
-            _ => Err(Error::Synthesis("".into())),
-        }
-    }
-
-    pub fn get_jubjub_point(&mut self, name: &str) -> Result<AssignedJubjubPoint, Error> {
-        match self.get(name) {
-            Some(CircuitType::JubjubPoint(p)) => Ok(p.clone()),
-            _ => Err(Error::Synthesis("".into())),
-        }
-    }
-
-    pub fn get_jubjub_scalar(&mut self, name: &str) -> Result<AssignedJubjubScalar, Error> {
-        match self.get(name) {
-            Some(CircuitType::JubjubScalar(s)) => Ok(s.clone()),
-            _ => Err(Error::Synthesis("".into())),
-        }
-    }
-}
+// Derives implementations:
+//  - From<T> for CircuitType
+//  - From<CircuitType> for T
+//
+// for all types T.
+impl_enum_from_try_from!(CircuitType {
+    Bit => AssignedBit,
+    Byte => AssignedByte,
+    Bytes => Vec<AssignedByte>,
+    Native => AssignedNative,
+    JubjubPoint => AssignedJubjubPoint,
+    JubjubScalar => AssignedJubjubScalar,
+});
 
 pub fn parse_bit(str: &str) -> Option<bool> {
     match str {

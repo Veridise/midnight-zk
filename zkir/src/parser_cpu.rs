@@ -7,10 +7,7 @@ use midnight_curves::{Fr as JubjubScalar, JubjubAffine, JubjubExtended, JubjubSu
 
 use crate::{
     instructions::Instruction as I,
-    types::{
-        get_bit, get_bytes, get_jubjub_point, get_jubjub_scalar, get_native, parse_bit, parse_byte,
-        parse_bytes, parse_native, OffCircuitType, ValType,
-    },
+    types::{parse_bit, parse_byte, parse_bytes, parse_native, OffCircuitType, ValType},
 };
 
 type F = midnight_curves::Fq;
@@ -39,15 +36,22 @@ impl ParserCPU {
         }
     }
 
-    pub fn insert(&mut self, name: &str, value: impl Into<OffCircuitType>) {
+    fn insert(&mut self, name: &str, value: impl Into<OffCircuitType>) {
         assert!(
             self.memory.insert(name.to_owned(), value.into()).is_none(),
             "variable already exists"
         );
     }
 
-    pub fn get(&self, name: &str) -> OffCircuitType {
+    fn get(&self, name: &str) -> OffCircuitType {
         self.memory.get(name).cloned().expect("variable not found")
+    }
+
+    fn get_t<T: TryFrom<OffCircuitType>>(&self, name: &str) -> T {
+        match self.memory.get(name) {
+            Some(x) => x.clone().try_into().ok().unwrap(),
+            None => panic!("variable {} is not in memory", name),
+        }
     }
 
     /// Returns the type of the variables associated with the given names.
@@ -170,7 +174,7 @@ fn add(parser: &mut ParserCPU, vals: &[String], output: &str) {
     parser.load_constants(val_t, vals);
     match val_t {
         ValType::Native => {
-            let r: F = vals.iter().map(|v| get_native(&parser.memory, v)).sum();
+            let r: F = vals.iter().map(|v| parser.get_t::<F>(v)).sum();
             parser.insert(output, r)
         }
         t => panic!("add unsupported on {:?}", t),
@@ -182,7 +186,7 @@ fn mul(parser: &mut ParserCPU, vals: &[String], output: &str) {
     parser.load_constants(val_t, vals);
     match val_t {
         ValType::Native => {
-            let r: F = vals.iter().map(|v| get_native(&parser.memory, v)).product();
+            let r: F = vals.iter().map(|v| parser.get_t::<F>(v)).product();
             parser.insert(output, r)
         }
         t => panic!("mul unsupported on {:?}", t),
@@ -191,8 +195,8 @@ fn mul(parser: &mut ParserCPU, vals: &[String], output: &str) {
 
 fn neg(parser: &mut ParserCPU, val: &String, output: &str) {
     match parser.infer_type(std::slice::from_ref(val)) {
-        ValType::Native => parser.insert(output, -get_native(&parser.memory, val)),
-        ValType::Bit => parser.insert(output, !get_bit(&parser.memory, val)),
+        ValType::Native => parser.insert(output, -parser.get_t::<F>(val)),
+        ValType::Bit => parser.insert(output, !parser.get_t::<bool>(val)),
         t => panic!("neg unsupported on {:?}", t),
     }
 }
@@ -210,9 +214,8 @@ fn msm(parser: &mut ParserCPU, bases: &[String], scalars: &[String], output: &st
 
     match (bases_t, scalars_t) {
         (ValType::JubjubPoint, ValType::JubjubScalar) => {
-            let bases: Vec<_> = bases.iter().map(|b| get_jubjub_point(&parser.memory, b)).collect();
-            let scalars: Vec<_> =
-                scalars.iter().map(|s| get_jubjub_scalar(&parser.memory, s)).collect();
+            let bases: Vec<_> = bases.iter().map(|b| parser.get_t::<JubjubSubgroup>(b)).collect();
+            let scalars: Vec<_> = scalars.iter().map(|s| parser.get_t::<JubjubScalar>(s)).collect();
             let p: JubjubSubgroup = bases.into_iter().zip(scalars).map(|(b, s)| b * s).sum();
             parser.insert(output, p)
         }
@@ -227,7 +230,7 @@ fn affine_coordinates(
 ) {
     match parser.infer_type(std::slice::from_ref(input)) {
         ValType::JubjubPoint => {
-            let p = get_jubjub_point(&parser.memory, input);
+            let p = parser.get_t::<JubjubSubgroup>(input);
             let p: JubjubExtended = p.into();
             let p: JubjubAffine = p.into();
             parser.insert(x_output, p.get_u());
@@ -241,14 +244,14 @@ fn select(parser: &mut ParserCPU, cond: &str, (x, y): &(String, String), output:
     let val_t = parser.infer_type(&[x.into(), y.into()]);
     parser.load_constants(val_t, &[x.into(), y.into()]);
 
-    let z = if get_bit(&parser.memory, cond) { x } else { y };
-    parser.insert(output, parser.get(z));
+    let cond = parser.get_t::<bool>(cond);
+    parser.insert(output, parser.get(if cond { x } else { y }));
 }
 
 fn into_bytes(parser: &mut ParserCPU, input: &String, nb_bytes: usize, output: &str) {
     match parser.infer_type(std::slice::from_ref(input)) {
         ValType::Native => {
-            let bytes = get_native(&parser.memory, input).to_bytes_le();
+            let bytes = parser.get_t::<F>(input).to_bytes_le();
             assert!(nb_bytes <= F::NUM_BITS.div_ceil(8) as usize);
             assert!(bytes[nb_bytes..].iter().all(|&b| b == 0));
             parser.insert(output, bytes[..nb_bytes].to_vec())
@@ -262,7 +265,8 @@ fn from_bytes(parser: &mut ParserCPU, val_t: &ValType, bytes_name: &String, outp
         ValType::Bytes(n) => n,
         _ => panic!("TODO"),
     };
-    let bytes = get_bytes(&parser.memory, bytes_name, n);
+    let bytes = parser.get_t::<Vec<u8>>(bytes_name);
+    assert_eq!(bytes.len(), n);
 
     match val_t {
         ValType::Native => {
@@ -282,6 +286,6 @@ fn from_bytes(parser: &mut ParserCPU, val_t: &ValType, bytes_name: &String, outp
 }
 
 fn poseidon(parser: &mut ParserCPU, inputs: &[String], output: &str) {
-    let xs: Vec<_> = inputs.iter().map(|name| get_native(&parser.memory, name)).collect();
+    let xs: Vec<_> = inputs.iter().map(|name| parser.get_t::<F>(name)).collect();
     parser.insert(output, <PoseidonChip<F> as HashCPU<F, F>>::hash(&xs))
 }
