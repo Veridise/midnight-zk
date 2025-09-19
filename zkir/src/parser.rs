@@ -215,17 +215,15 @@ pub(crate) fn load(
                 names
                     .iter()
                     .flat_map(|name| {
-                        let bytes = get::<&[u8]>(m, name);
+                        let bytes = get::<Vec<u8>>(m, name);
                         assert_eq!(bytes.len(), *n);
                         bytes
                     })
-                    .copied()
                     .collect::<Vec<_>>()
             });
             let flatten_bytes: Vec<AssignedByte> =
                 std.assign_many(layouter, &vals.clone().transpose_vec(names.len() * *n))?;
-            let chunks =
-                flatten_bytes.chunks(*n).map(|chunk| chunk.clone().into()).collect::<Vec<_>>();
+            let chunks = flatten_bytes.chunks(*n).map(|chunk| chunk.into()).collect::<Vec<_>>();
             parser.insert_many(names, &chunks)
         }
         _ => unimplemented!(),
@@ -260,7 +258,7 @@ pub(crate) fn publish(
                 parser.std_lib.jubjub().constrain_as_public_input(layouter, &s)
             }
             ValType::Array(t, n) if *t == ValType::Byte => {
-                let bytes = parser.get_t::<&[AssignedByte]>(v)?;
+                let bytes = parser.get_t::<Vec<AssignedByte>>(v)?;
                 assert_eq!(bytes.len(), n);
                 (bytes.iter())
                     .try_for_each(|b| parser.std_lib.constrain_as_public_input(layouter, b))
@@ -302,8 +300,8 @@ pub(crate) fn assert_equal(
         ),
         ValType::JubjubScalar => panic!("assert_equal is not supported on Jubjub scalars"),
         ValType::Array(t, n) if *t == ValType::Byte => {
-            let x_bytes = parser.get_t::<&[AssignedByte]>(x)?;
-            let y_bytes = parser.get_t::<&[AssignedByte]>(y)?;
+            let x_bytes = parser.get_t::<Vec<AssignedByte>>(x)?;
+            let y_bytes = parser.get_t::<Vec<AssignedByte>>(y)?;
             assert_eq!(x_bytes.len(), n);
             assert_eq!(y_bytes.len(), n);
             (x_bytes.iter().zip(y_bytes.iter()))
@@ -345,8 +343,8 @@ pub(crate) fn is_equal(
         ),
         ValType::JubjubScalar => panic!("is_equal is not supported on Jubjub scalars"),
         ValType::Array(t, n) if *t == ValType::Byte => {
-            let x_bytes = parser.get_t::<&[AssignedByte]>(x)?;
-            let y_bytes = parser.get_t::<&[AssignedByte]>(x)?;
+            let x_bytes = parser.get_t::<Vec<AssignedByte>>(x)?;
+            let y_bytes = parser.get_t::<Vec<AssignedByte>>(x)?;
             assert_eq!(x_bytes.len(), n);
             assert_eq!(y_bytes.len(), n);
             let bits: Vec<_> = (x_bytes.iter().zip(y_bytes.iter()))
@@ -534,8 +532,8 @@ pub(crate) fn select(
         }
         ValType::JubjubScalar => panic!("select is not supported on Jubjub scalars"),
         ValType::Array(t, n) if *t == ValType::Byte => {
-            let x_bytes = parser.get_t::<&[AssignedByte]>(x)?;
-            let y_bytes = parser.get_t::<&[AssignedByte]>(y)?;
+            let x_bytes = parser.get_t::<Vec<AssignedByte>>(x)?;
+            let y_bytes = parser.get_t::<Vec<AssignedByte>>(y)?;
             assert_eq!(x_bytes.len(), n);
             assert_eq!(y_bytes.len(), n);
             let z_bytes = (x_bytes.into_iter().zip(y_bytes.into_iter()))
@@ -578,7 +576,7 @@ pub(crate) fn from_bytes(
         ValType::Array(t, n) if *t == ValType::Byte => n,
         _ => panic!("TODO"),
     };
-    let bytes = parser.get_t::<&[AssignedByte]>(bytes_name)?;
+    let bytes = parser.get_t::<Vec<AssignedByte>>(bytes_name)?;
     assert_eq!(bytes.len(), n);
 
     match val_t {

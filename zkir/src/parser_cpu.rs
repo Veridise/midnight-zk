@@ -19,7 +19,11 @@ pub fn type_of(v: &OffCircuitType) -> ValType {
         OffCircuitType::Native(_) => ValType::Native,
         OffCircuitType::JubjubPoint(_) => ValType::JubjubPoint,
         OffCircuitType::JubjubScalar(_) => ValType::JubjubScalar,
-        OffCircuitType::Array(t, n) => ValType::Array(Box::new(type_of(t)), *n),
+        OffCircuitType::Array(array) => {
+            let t = type_of(&array[0]);
+            array.iter().skip(1).for_each(|x| assert_eq!(type_of(x), t));
+            ValType::Array(Box::new(t), array.len())
+        }
     }
 }
 
@@ -93,7 +97,7 @@ impl ParserCPU {
             ValType::Array(t, n) if **t == ValType::Byte => {
                 let bytes = parse_bytes(str).expect("bytes");
                 assert_eq!(bytes.len(), *n);
-                self.insert(str, bytes.as_slice())
+                self.insert(str, bytes)
             }
             _ => unimplemented!(),
         }
@@ -255,7 +259,7 @@ fn into_bytes(parser: &mut ParserCPU, input: &String, nb_bytes: usize, output: &
             let bytes = parser.get_t::<F>(input).to_bytes_le();
             assert!(nb_bytes <= F::NUM_BITS.div_ceil(8) as usize);
             assert!(bytes[nb_bytes..].iter().all(|&b| b == 0));
-            parser.insert(output, &bytes[..nb_bytes])
+            parser.insert(output, bytes[..nb_bytes].to_vec())
         }
         t => panic!("into_bytes unsupported on {:?}", t),
     }
@@ -266,7 +270,7 @@ fn from_bytes(parser: &mut ParserCPU, val_t: &ValType, bytes_name: &String, outp
         ValType::Array(t, n) if *t == ValType::Byte => n,
         _ => panic!("TODO"),
     };
-    let bytes = parser.get_t::<&[u8]>(bytes_name);
+    let bytes = parser.get_t::<Vec<u8>>(bytes_name);
     assert_eq!(bytes.len(), n);
 
     match val_t {

@@ -10,7 +10,7 @@ use midnight_circuits::{
 };
 use midnight_curves::{Fr as JubjubScalar, JubjubAffine, JubjubExtended as Jubjub, JubjubSubgroup};
 use midnight_proofs::poly::kzg::params::ParamsKZG;
-use midnight_zkir_parser::{IrSource, OffCircuitType};
+use midnight_zkir_parser::IrSource;
 use rand_chacha::{
     rand_core::{OsRng, RngCore, SeedableRng},
     ChaCha8Rng,
@@ -35,16 +35,15 @@ fn main() {
             { "op": "load", "type": "JubjubPoint", "names": ["PK"] },
             { "op": "load", "type": "Native", "names": ["msg"] },
             { "op": "load", "type": "JubjubScalar", "names": ["s"] },
-            { "op": "load", "type": "Byte", "names": ["e0", "e0", "e0", "e0", "e0" ,...] },
-            { "op": "load", "type": { "Bytes" : 32 }, "names": ["e_bytes"] },
+            { "op": "load", "type": { "Array" : ["Byte", 32] }, "names": ["e_bytes"] },
             { "op": "publish", "vals": ["msg"] },
             { "op": "from_bytes", "type": "JubjubScalar", "bytes": "e_bytes", "output": "e" },
             { "op": "msm", "bases": ["PK", "Jubjub::GENERATOR"], "scalars": ["e", "s"], "output": "R" },
             { "op": "affine_coordinates", "val": "PK", "output": ["PKx", "PKy"] },
             { "op": "affine_coordinates", "val": "R", "output": ["Rx", "Ry"] },
             { "op": "poseidon", "vals": ["PKx", "PKy", "Rx", "Ry", "msg"], "output": "h" },
-            { "op": "into_bytes", "nb_bytes": 32, "val": "h", "output": "[h0, h1, h....]" },
-            { "op": "assert_equal", "vals": ["h0, ...", "h_bytes"] }
+            { "op": "into_bytes", "nb_bytes": 32, "val": "h", "output": "h_bytes" },
+            { "op": "assert_equal", "vals": ["e_bytes", "h_bytes"] }
         ]
     }
     "#;
@@ -61,9 +60,9 @@ fn main() {
 
     let witness = HashMap::from_iter([
         ("PK", pk.into()),
-        ("msg", OffCircuitType::Native(msg)),
-        ("s", OffCircuitType::JubjubScalar(sig.s)),
-        ("e_bytes", OffCircuitType::Bytes(sig.e_bytes.to_vec())),
+        ("msg", msg.into()),
+        ("s", sig.s.into()),
+        ("e_bytes", sig.e_bytes.to_vec().into()),
     ]);
     let instance = ir.public_inputs(witness.clone());
 

@@ -65,9 +65,7 @@ impl Relation for IrSource {
                 OffCircuitType::Native(x) => AssignedNative::as_public_input(x),
                 OffCircuitType::JubjubPoint(p) => AssignedJubjubPoint::as_public_input(p),
                 OffCircuitType::JubjubScalar(s) => AssignedJubjubScalar::as_public_input(s),
-                OffCircuitType::Array(array, n) => {
-                    (*array).iter().flat_map(Self::format_instance(instance)).collect()
-                }
+                OffCircuitType::Array(array) => Self::format_instance(array),
             })
             .collect()
     }

@@ -76,11 +76,11 @@ impl_enum_from_try_from!(OffCircuitType {
     JubjubScalar => JubjubScalar,
 });
 
-impl<T: Clone> From<&[T]> for OffCircuitType
+impl<T: Clone> From<Vec<T>> for OffCircuitType
 where
     OffCircuitType: From<T>,
 {
-    fn from(array: &[T]) -> Self {
+    fn from(array: Vec<T>) -> Self {
         OffCircuitType::Array(array.iter().map(|t| t.clone().into()).collect())
     }
 }
@@ -94,12 +94,7 @@ where
     fn try_from(value: OffCircuitType) -> Result<Self, Self::Error> {
         match value {
             OffCircuitType::Array(array) => {
-                let mut v: Vec<T> = Vec::with_capacity(array.len());
-                for t in array.iter() {
-                    v.push(t.clone().try_into()?);
-                }
-
-                todo!()
+                Ok(array.into_iter().map(|t| t.try_into()).collect::<Result<Vec<T>, _>>()?)
             }
             other => Err(format!("variable {:?} is not of type Array", other)),
         }
@@ -119,24 +114,25 @@ impl_enum_from_try_from!(CircuitType {
     JubjubScalar => AssignedJubjubScalar,
 });
 
-impl<T> From<&[T]> for CircuitType {
+impl<T: Clone> From<&[T]> for CircuitType
+where
+    CircuitType: From<T>,
+{
     fn from(array: &[T]) -> Self {
-        let n = array.len();
-        CircuitType::Array(Box::new(array.into()), n)
+        CircuitType::Array(array.iter().map(|t| t.clone().into()).collect())
     }
 }
 
-impl<T> TryFrom<CircuitType> for &[T] {
+impl<T> TryFrom<CircuitType> for Vec<T>
+where
+    T: TryFrom<CircuitType, Error = String>,
+{
     type Error = String;
 
     fn try_from(value: CircuitType) -> Result<Self, Self::Error> {
         match value {
-            CircuitType::Array(t, n) => {
-                let array: &[T] = (*t).try_into()?;
-                if array.len() != n {
-                    return Err(format!("the length of the array is not {}", n));
-                }
-                Ok(array)
+            CircuitType::Array(array) => {
+                Ok(array.into_iter().map(|t| t.try_into()).collect::<Result<Vec<T>, _>>()?)
             }
             other => Err(format!("variable {:?} is not of type Array", other)),
         }
