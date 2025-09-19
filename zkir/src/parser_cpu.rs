@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 
 use ff::PrimeField;
-use group::Group;
 use midnight_circuits::{hash::poseidon::PoseidonChip, instructions::hash::HashCPU};
 use midnight_curves::{Fr as JubjubScalar, JubjubAffine, JubjubExtended, JubjubSubgroup};
 
 use crate::{
     instructions::Instruction as I,
-    types::{parse_bit, parse_byte, parse_bytes, parse_native, OffCircuitType, ValType},
+    types::{parse_constant, OffCircuitType, ValType},
 };
 
 type F = midnight_curves::Fq;
@@ -79,36 +78,12 @@ impl ParserCPU {
         inferred_type.expect("type could not be inferred")
     }
 
-    /// Parses the given name as a constant of the given type and adds it to the
-    /// memory.
-    pub fn load_constant(&mut self, val_t: &ValType, str: &str) {
-        match val_t {
-            ValType::Bit => self.insert(str, parse_bit(str).expect("0 or 1")),
-            ValType::Byte => self.insert(str, parse_byte(str).expect("byte")),
-            ValType::Native => self.insert(str, parse_native(str).expect("native")),
-            ValType::JubjubPoint => {
-                let p = match str {
-                    "Jubjub::GENERATOR" => JubjubSubgroup::generator(),
-                    _ => todo!(),
-                };
-                self.insert(str, p)
-            }
-            ValType::JubjubScalar => todo!(),
-            ValType::Array(t, n) if **t == ValType::Byte => {
-                let bytes = parse_bytes(str).expect("bytes");
-                assert_eq!(bytes.len(), *n);
-                self.insert(str, bytes)
-            }
-            _ => unimplemented!(),
-        }
-    }
-
     /// Takes a list of names and parses as constants (of the given type) those
     /// that are do not appear in the memory. It adds them to the memory.
     pub fn load_constants(&mut self, val_t: &ValType, names: &[String]) {
         for name in names.iter() {
             if !self.memory.contains_key(name) {
-                self.load_constant(val_t, name);
+                self.insert(name, parse_constant(val_t, name));
             }
         }
     }

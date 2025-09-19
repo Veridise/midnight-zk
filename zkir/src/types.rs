@@ -1,3 +1,4 @@
+use group::Group;
 use midnight_curves::{Fr as JubjubScalar, JubjubExtended, JubjubSubgroup};
 use serde::Deserialize;
 
@@ -153,10 +154,6 @@ pub fn parse_byte(str: &str) -> Option<u8> {
         .and_then(|bytes| if let [b] = &bytes[..] { Some(*b) } else { None })
 }
 
-pub fn parse_bytes(str: &str) -> Option<Vec<u8>> {
-    const_hex::decode(str).ok()
-}
-
 pub fn parse_native(str: &str) -> Option<F> {
     let mut repr = str.as_bytes();
     let is_negative = !repr.is_empty() && repr[0] == b'-';
@@ -172,4 +169,29 @@ pub fn parse_native(str: &str) -> Option<F> {
             x
         }
     })
+}
+
+pub fn parse_constant(val_t: &ValType, str: &str) -> OffCircuitType {
+    match val_t {
+        ValType::Bit => parse_bit(str).expect("0 or 1").into(),
+        ValType::Byte => parse_byte(str).expect("byte").into(),
+        ValType::Native => parse_native(str).expect("native").into(),
+        ValType::JubjubPoint => match str {
+            "Jubjub::GENERATOR" => JubjubSubgroup::generator().into(),
+            _ => todo!(),
+        },
+        ValType::JubjubScalar => todo!(),
+        ValType::Array(t, n) => {
+            let array = str
+                .strip_prefix('[')
+                .and_then(|s| s.strip_suffix(']'))
+                .expect("arrays must start with '[' and end with ']'")
+                .split(',')
+                .map(|s| s.trim())
+                .map(|w| parse_constant(t, w))
+                .collect::<Vec<_>>();
+            assert_eq!(array.len(), *n);
+            array.into()
+        }
+    }
 }

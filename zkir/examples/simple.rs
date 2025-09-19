@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use blake2b_simd::State as Blake2b;
 use midnight_circuits::compact_std_lib::{self, MidnightCircuit};
 use midnight_proofs::poly::kzg::params::ParamsKZG;
-use midnight_zkir_parser::{IrSource, OffCircuitType};
+use midnight_zkir_parser::IrSource;
 use rand_chacha::rand_core::OsRng;
 
 type F = midnight_curves::Fq;
@@ -20,7 +20,10 @@ fn main() {
             { "op": "assert_equal", "vals": ["x", "-0x01"] },
             { "op": "assert_equal", "vals": ["b0", "1"] },
             { "op": "assert_equal", "vals": ["0xFA", "B0"] },
-            { "op": "mul", "output": "z", "vals": ["x", "x"] }
+            { "op": "mul", "output": "z", "vals": ["x", "x"] },
+
+            { "op": "load", "type": { "Array" : ["Byte", 2] }, "names": ["bytes"] },
+            { "op": "assert_equal", "vals": ["bytes", "[0xFF, 0x07]"] }
         ]
     }
     "#;
@@ -37,10 +40,11 @@ fn main() {
 
     let instance = vec![];
     let witness = HashMap::from_iter([
-        ("v0", OffCircuitType::Native(F::from(1))),
-        ("v1", OffCircuitType::Native(-F::from(2))),
-        ("b0", OffCircuitType::Bit(true)),
-        ("B0", OffCircuitType::Byte(0xFA)),
+        ("v0", F::from(1).into()),
+        ("v1", (-F::from(2)).into()),
+        ("b0", true.into()),
+        ("B0", 0xFA.into()),
+        ("bytes", vec![0xFF, 0x07].into()),
     ]);
 
     let proof = compact_std_lib::prove::<_, Blake2b>(&srs, &pk, &ir, &instance, witness, OsRng)

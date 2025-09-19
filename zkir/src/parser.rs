@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use ff::Field;
-use group::Group;
 use midnight_circuits::{compact_std_lib::ZkStdLib, instructions::*};
 use midnight_curves::{Fr as JubjubScalar, JubjubExtended, JubjubSubgroup};
 use midnight_proofs::{
@@ -9,9 +8,7 @@ use midnight_proofs::{
     plonk::Error,
 };
 
-use crate::types::{
-    parse_bit, parse_byte, parse_bytes, parse_native, type_of, CircuitType, OffCircuitType, ValType,
-};
+use crate::types::{parse_constant, type_of, CircuitType, OffCircuitType, ValType};
 
 type F = midnight_curves::Fq;
 
@@ -45,7 +42,7 @@ impl<'a> Parser<'a> {
 
     pub fn insert_many(&mut self, names: &[String], values: &[CircuitType]) -> Result<(), Error> {
         if names.len() != values.len() {
-            return Err(Error::Synthesis("".into()));
+            return Err(Error::Synthesis("insert_many".into()));
         }
         (names.iter().zip(values.iter())).try_for_each(|(name, value)| self.insert(name, value))
     }
@@ -56,7 +53,13 @@ impl<'a> Parser<'a> {
 
     fn get_t<T: TryFrom<CircuitType>>(&self, name: &str) -> Result<T, Error> {
         match self.memory.get(name) {
-            Some(x) => x.clone().try_into().map_err(|_| Error::Synthesis("".into())),
+            Some(x) => x.clone().try_into().map_err(|_| {
+                Error::Synthesis(format!(
+                    "get_t: variable {} is not of type {}",
+                    name,
+                    stringify!(T)
+                ))
+            }),
             None => panic!("variable {} is not in memory", name),
         }
     }
@@ -73,7 +76,7 @@ impl<'a> Parser<'a> {
             if let Some(v) = self.get(name) {
                 let t = inferred_type.get_or_insert_with(|| type_of(&v));
                 if &type_of(&v) != t {
-                    return Err(Error::Synthesis("".into()));
+                    return Err(Error::Synthesis("infer_type".into()));
                 }
             }
         }
@@ -83,53 +86,92 @@ impl<'a> Parser<'a> {
         )))
     }
 
-    /// Parses the given name as a constant of the given type and assigns it
-    /// in-circuit as a fixed value.
-    pub fn assign_constant(
+    // /// Parses the given name as a constant of the given type and assigns it
+    // /// in-circuit as a fixed value.
+    // pub fn assign_constant(
+    //     &mut self,
+    //     layouter: &mut impl Layouter<F>,
+    //     val_t: &ValType,
+    //     name: &str,
+    // ) -> Result<(), Error> {
+    //     match val_t {
+    //         ValType::Bit => {
+    //             let bit_val =
+    // parse_bit(name).ok_or(Error::Synthesis("".into()))?;             let bit
+    // = self.std_lib.assign_fixed(layouter, bit_val)?;
+    // self.insert(name, &CircuitType::Bit(bit))         }
+    //         ValType::Byte => {
+    //             let byte_val =
+    // parse_byte(name).ok_or(Error::Synthesis("".into()))?;             let
+    // byte = self.std_lib.assign_fixed(layouter, byte_val)?;
+    // self.insert(name, &CircuitType::Byte(byte))         }
+    //         ValType::Native => {
+    //             let x_val =
+    // parse_native(name).ok_or(Error::Synthesis("".into()))?;             let x
+    // = self.std_lib.assign_fixed(layouter, x_val)?;
+    // self.insert(name, &CircuitType::Native(x))         }
+    //         ValType::JubjubPoint => {
+    //             let p_val = match name {
+    //                 "Jubjub::GENERATOR" => JubjubSubgroup::generator(),
+    //                 _ => todo!(),
+    //             };
+    //             let p = self.std_lib.jubjub().assign_fixed(layouter, p_val)?;
+    //             self.insert(name, &CircuitType::JubjubPoint(p))
+    //         }
+    //         ValType::JubjubScalar => todo!(),
+    //         ValType::Array(t, n) => {
+    //             let array = parse_constant(val_t, name);
+    //             match t {
+    //                 ValType::Byte => {
+    //                     let bytes =
+    //                 }
+    //             }
+    //             let byte_vals =
+    // parse_bytes(name).ok_or(Error::Synthesis("assign_bytes".into()))?;
+    //             let bytes: Vec<AssignedByte> =
+    //                 self.std_lib.assign_many_fixed(layouter, &byte_vals)?;
+    //             if bytes.len() != *n {
+    //                 return Err(Error::Synthesis(format!(
+    //                     "expected {} bytes, {} given",
+    //                     n,
+    //                     bytes.len()
+    //                 )));
+    //             }
+    //             self.insert(name, &bytes.as_slice().into())
+    //         }
+    //     }
+    // }
+
+    pub fn parse_constant(
         &mut self,
         layouter: &mut impl Layouter<F>,
-        val_t: &ValType,
-        name: &str,
-    ) -> Result<(), Error> {
-        match val_t {
-            ValType::Bit => {
-                let bit_val = parse_bit(name).ok_or(Error::Synthesis("".into()))?;
-                let bit = self.std_lib.assign_fixed(layouter, bit_val)?;
-                self.insert(name, &CircuitType::Bit(bit))
+        constant: OffCircuitType,
+    ) -> Result<CircuitType, Error> {
+        match constant {
+            OffCircuitType::Bit(b) => {
+                self.std_lib.assign_fixed(layouter, b).map(|b: AssignedBit| b.into())
             }
-            ValType::Byte => {
-                let byte_val = parse_byte(name).ok_or(Error::Synthesis("".into()))?;
-                let byte = self.std_lib.assign_fixed(layouter, byte_val)?;
-                self.insert(name, &CircuitType::Byte(byte))
+            OffCircuitType::Byte(b) => {
+                self.std_lib.assign_fixed(layouter, b).map(|b: AssignedByte| b.into())
             }
-            ValType::Native => {
-                let x_val = parse_native(name).ok_or(Error::Synthesis("".into()))?;
-                let x = self.std_lib.assign_fixed(layouter, x_val)?;
-                self.insert(name, &CircuitType::Native(x))
+            OffCircuitType::Native(x) => {
+                self.std_lib.assign_fixed(layouter, x).map(|x: AssignedNative| x.into())
             }
-            ValType::JubjubPoint => {
-                let p_val = match name {
-                    "Jubjub::GENERATOR" => JubjubSubgroup::generator(),
-                    _ => todo!(),
-                };
-                let p = self.std_lib.jubjub().assign_fixed(layouter, p_val)?;
-                self.insert(name, &CircuitType::JubjubPoint(p))
+            OffCircuitType::JubjubPoint(p) => {
+                let p: AssignedJubjubPoint = self.std_lib.jubjub().assign_fixed(layouter, p)?;
+                Ok(p.into())
             }
-            ValType::JubjubScalar => todo!(),
-            ValType::Array(t, n) if **t == ValType::Byte => {
-                let byte_vals = parse_bytes(name).ok_or(Error::Synthesis("".into()))?;
-                let bytes: Vec<AssignedByte> =
-                    self.std_lib.assign_many_fixed(layouter, &byte_vals)?;
-                if bytes.len() != *n {
-                    return Err(Error::Synthesis(format!(
-                        "expected {} bytes, {} given",
-                        n,
-                        bytes.len()
-                    )));
-                }
-                self.insert(name, &bytes.as_slice().into())
+            OffCircuitType::JubjubScalar(s) => {
+                let s: AssignedJubjubScalar = self.std_lib.jubjub().assign_fixed(layouter, s)?;
+                Ok(s.into())
             }
-            _ => todo!("other arrays not supported"),
+            OffCircuitType::Array(array) => {
+                let v = array
+                    .iter()
+                    .map(|x| self.parse_constant(layouter, x.clone()))
+                    .collect::<Result<Vec<_>, Error>>()?;
+                Ok(CircuitType::Array(v))
+            }
         }
     }
 
@@ -144,19 +186,24 @@ impl<'a> Parser<'a> {
     ) -> Result<(), Error> {
         for name in names.iter() {
             if self.get(name).is_none() {
-                self.assign_constant(layouter, val_t, name)?;
+                let offcircuit = parse_constant(val_t, name);
+                let incircuit = self.parse_constant(layouter, offcircuit)?;
+                self.insert(name, &incircuit)?;
             }
         }
         Ok(())
     }
 }
 
-fn get<T: TryFrom<OffCircuitType>>(
+fn get<T: TryFrom<OffCircuitType, Error = String>>(
     memory: &HashMap<&'static str, OffCircuitType>,
     name: &str,
 ) -> T {
     match memory.get(name) {
-        Some(x) => x.clone().try_into().ok().unwrap(),
+        Some(x) => match x.clone().try_into() {
+            Ok(v) => v,
+            Err(e) => panic!("{e}"),
+        },
         None => panic!("variable {} is not in memory", name),
     }
 }
