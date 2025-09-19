@@ -12,7 +12,7 @@ fn main() {
     let ir_raw = r#"{
         "version": { "major": 3, "minor": 0 },
         "instructions": [
-            { "op": "load", "type": "Field", "names": ["v0", "v1"] },
+            { "op": "load", "type": "Native", "names": ["v0", "v1"] },
             { "op": "load", "type": "Bit", "names": ["b0"] },
             { "op": "load", "type": "Byte", "names": ["B0"] },
             { "op": "add", "output": "x", "vals": ["v0", "v1"] },

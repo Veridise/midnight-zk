@@ -11,15 +11,14 @@ type AssignedNative = midnight_circuits::types::AssignedNative<F>;
 type AssignedJubjubPoint = midnight_circuits::types::AssignedNativePoint<JubjubExtended>;
 type AssignedJubjubScalar = midnight_circuits::types::AssignedScalarOfNativeCurve<JubjubExtended>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub(crate) enum ValType {
     Bit,
     Byte,
-    Bytes(usize),
-    #[serde(rename = "Field")]
     Native,
     JubjubPoint,
     JubjubScalar,
+    Array(Box<ValType>, usize),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,63 +29,119 @@ pub enum OffCircuitType {
     /// TODO
     Byte(u8),
     /// TODO
-    Bytes(Vec<u8>),
-    /// TODO
     Native(F),
     /// TODO
     JubjubPoint(JubjubSubgroup),
     /// TODO
     JubjubScalar(JubjubScalar),
+    /// TODO
+    Array(Vec<OffCircuitType>),
 }
 
 #[derive(Clone, Debug)]
 pub enum CircuitType {
     Bit(AssignedBit),
     Byte(AssignedByte),
-    Bytes(Vec<AssignedByte>),
     Native(AssignedNative),
     JubjubPoint(AssignedJubjubPoint),
     JubjubScalar(AssignedJubjubScalar),
+    Array(Vec<CircuitType>),
 }
 
 pub fn type_of(v: &CircuitType) -> ValType {
     match v {
         CircuitType::Bit(_) => ValType::Bit,
         CircuitType::Byte(_) => ValType::Byte,
-        CircuitType::Bytes(v) => ValType::Bytes(v.len()),
         CircuitType::Native(_) => ValType::Native,
         CircuitType::JubjubPoint(_) => ValType::JubjubPoint,
         CircuitType::JubjubScalar(_) => ValType::JubjubScalar,
+        CircuitType::Array(array) => {
+            let t = type_of(&array[0]);
+            array.iter().skip(1).for_each(|x| assert_eq!(type_of(x), t));
+            ValType::Array(Box::new(t), array.len())
+        }
     }
 }
 
 // Derives implementations:
 //  - From<T> for OffCircuitType
-//  - From<OffCircuitType> for T
+//  - TryFrom<OffCircuitType> for T
 //
-// for all types T.
+// for all basic types T (not Array).
 impl_enum_from_try_from!(OffCircuitType {
     Bit => bool,
     Byte => u8,
-    Bytes => Vec<u8>,
     Native => F,
     JubjubPoint => JubjubSubgroup,
     JubjubScalar => JubjubScalar,
 });
 
+impl<T: Clone> From<&[T]> for OffCircuitType
+where
+    OffCircuitType: From<T>,
+{
+    fn from(array: &[T]) -> Self {
+        OffCircuitType::Array(array.iter().map(|t| t.clone().into()).collect())
+    }
+}
+
+impl<T> TryFrom<OffCircuitType> for Vec<T>
+where
+    T: TryFrom<OffCircuitType, Error = String>,
+{
+    type Error = String;
+
+    fn try_from(value: OffCircuitType) -> Result<Self, Self::Error> {
+        match value {
+            OffCircuitType::Array(array) => {
+                let mut v: Vec<T> = Vec::with_capacity(array.len());
+                for t in array.iter() {
+                    v.push(t.clone().try_into()?);
+                }
+
+                todo!()
+            }
+            other => Err(format!("variable {:?} is not of type Array", other)),
+        }
+    }
+}
+
 // Derives implementations:
 //  - From<T> for CircuitType
-//  - From<CircuitType> for T
+//  - TryFrom<CircuitType> for T
 //
-// for all types T.
+// for all basic types T (not Array).
 impl_enum_from_try_from!(CircuitType {
     Bit => AssignedBit,
     Byte => AssignedByte,
-    Bytes => Vec<AssignedByte>,
     Native => AssignedNative,
     JubjubPoint => AssignedJubjubPoint,
     JubjubScalar => AssignedJubjubScalar,
 });
+
+impl<T> From<&[T]> for CircuitType {
+    fn from(array: &[T]) -> Self {
+        let n = array.len();
+        CircuitType::Array(Box::new(array.into()), n)
+    }
+}
+
+impl<T> TryFrom<CircuitType> for &[T] {
+    type Error = String;
+
+    fn try_from(value: CircuitType) -> Result<Self, Self::Error> {
+        match value {
+            CircuitType::Array(t, n) => {
+                let array: &[T] = (*t).try_into()?;
+                if array.len() != n {
+                    return Err(format!("the length of the array is not {}", n));
+                }
+                Ok(array)
+            }
+            other => Err(format!("variable {:?} is not of type Array", other)),
+        }
+    }
+}
 
 pub fn parse_bit(str: &str) -> Option<bool> {
     match str {

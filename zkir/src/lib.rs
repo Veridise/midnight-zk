@@ -3,6 +3,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(missing_debug_implementations)]
 #![deny(missing_docs)]
+#![recursion_limit = "256"]
 
 // #[doc = include_str!("../README.md")]
 

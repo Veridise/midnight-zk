@@ -33,8 +33,9 @@ fn main() {
         "version": { "major": 3, "minor": 0 },
         "instructions": [
             { "op": "load", "type": "JubjubPoint", "names": ["PK"] },
-            { "op": "load", "type": "Field", "names": ["msg"] },
+            { "op": "load", "type": "Native", "names": ["msg"] },
             { "op": "load", "type": "JubjubScalar", "names": ["s"] },
+            { "op": "load", "type": "Byte", "names": ["e0", "e0", "e0", "e0", "e0" ,...] },
             { "op": "load", "type": { "Bytes" : 32 }, "names": ["e_bytes"] },
             { "op": "publish", "vals": ["msg"] },
             { "op": "from_bytes", "type": "JubjubScalar", "bytes": "e_bytes", "output": "e" },
@@ -42,8 +43,8 @@ fn main() {
             { "op": "affine_coordinates", "val": "PK", "output": ["PKx", "PKy"] },
             { "op": "affine_coordinates", "val": "R", "output": ["Rx", "Ry"] },
             { "op": "poseidon", "vals": ["PKx", "PKy", "Rx", "Ry", "msg"], "output": "h" },
-            { "op": "into_bytes", "nb_bytes": 32, "val": "h", "output": "h_bytes" },
-            { "op": "assert_equal", "vals": ["e_bytes", "h_bytes"] }
+            { "op": "into_bytes", "nb_bytes": 32, "val": "h", "output": "[h0, h1, h....]" },
+            { "op": "assert_equal", "vals": ["h0, ...", "h_bytes"] }
         ]
     }
     "#;

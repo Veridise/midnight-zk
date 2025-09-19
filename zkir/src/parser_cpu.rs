@@ -16,10 +16,10 @@ pub fn type_of(v: &OffCircuitType) -> ValType {
     match v {
         OffCircuitType::Bit(_) => ValType::Bit,
         OffCircuitType::Byte(_) => ValType::Byte,
-        OffCircuitType::Bytes(v) => ValType::Bytes(v.len()),
         OffCircuitType::Native(_) => ValType::Native,
         OffCircuitType::JubjubPoint(_) => ValType::JubjubPoint,
         OffCircuitType::JubjubScalar(_) => ValType::JubjubScalar,
+        OffCircuitType::Array(t, n) => ValType::Array(Box::new(type_of(t)), *n),
     }
 }
 
@@ -77,15 +77,10 @@ impl ParserCPU {
 
     /// Parses the given name as a constant of the given type and adds it to the
     /// memory.
-    pub fn load_constant(&mut self, val_t: ValType, str: &str) {
+    pub fn load_constant(&mut self, val_t: &ValType, str: &str) {
         match val_t {
             ValType::Bit => self.insert(str, parse_bit(str).expect("0 or 1")),
             ValType::Byte => self.insert(str, parse_byte(str).expect("byte")),
-            ValType::Bytes(n) => {
-                let bytes = parse_bytes(str).expect("bytes");
-                assert_eq!(bytes.len(), n);
-                self.insert(str, bytes)
-            }
             ValType::Native => self.insert(str, parse_native(str).expect("native")),
             ValType::JubjubPoint => {
                 let p = match str {
@@ -95,12 +90,18 @@ impl ParserCPU {
                 self.insert(str, p)
             }
             ValType::JubjubScalar => todo!(),
+            ValType::Array(t, n) if **t == ValType::Byte => {
+                let bytes = parse_bytes(str).expect("bytes");
+                assert_eq!(bytes.len(), *n);
+                self.insert(str, bytes.as_slice())
+            }
+            _ => unimplemented!(),
         }
     }
 
     /// Takes a list of names and parses as constants (of the given type) those
     /// that are do not appear in the memory. It adds them to the memory.
-    pub fn load_constants(&mut self, val_t: ValType, names: &[String]) {
+    pub fn load_constants(&mut self, val_t: &ValType, names: &[String]) {
         for name in names.iter() {
             if !self.memory.contains_key(name) {
                 self.load_constant(val_t, name);
@@ -159,19 +160,19 @@ fn publish(parser: &mut ParserCPU, vals: &[String]) {
 
 fn assert_equal(parser: &mut ParserCPU, (x, y): &(String, String)) {
     let val_t = parser.infer_type(&[x.into(), y.into()]);
-    parser.load_constants(val_t, &[x.into(), y.into()]);
+    parser.load_constants(&val_t, &[x.into(), y.into()]);
     assert_eq!(parser.get(x), parser.get(y));
 }
 
 fn is_equal(parser: &mut ParserCPU, (x, y): &(String, String), output: &str) {
     let val_t = parser.infer_type(&[x.into(), y.into()]);
-    parser.load_constants(val_t, &[x.into(), y.into()]);
+    parser.load_constants(&val_t, &[x.into(), y.into()]);
     parser.insert(output, parser.get(x) == parser.get(y));
 }
 
 fn add(parser: &mut ParserCPU, vals: &[String], output: &str) {
     let val_t = parser.infer_type(vals);
-    parser.load_constants(val_t, vals);
+    parser.load_constants(&val_t, vals);
     match val_t {
         ValType::Native => {
             let r: F = vals.iter().map(|v| parser.get_t::<F>(v)).sum();
@@ -183,7 +184,7 @@ fn add(parser: &mut ParserCPU, vals: &[String], output: &str) {
 
 fn mul(parser: &mut ParserCPU, vals: &[String], output: &str) {
     let val_t = parser.infer_type(vals);
-    parser.load_constants(val_t, vals);
+    parser.load_constants(&val_t, vals);
     match val_t {
         ValType::Native => {
             let r: F = vals.iter().map(|v| parser.get_t::<F>(v)).product();
@@ -209,8 +210,8 @@ fn msm(parser: &mut ParserCPU, bases: &[String], scalars: &[String], output: &st
 
     let bases_t = parser.infer_type(bases);
     let scalars_t = parser.infer_type(scalars);
-    parser.load_constants(bases_t, bases);
-    parser.load_constants(scalars_t, scalars);
+    parser.load_constants(&bases_t, bases);
+    parser.load_constants(&scalars_t, scalars);
 
     match (bases_t, scalars_t) {
         (ValType::JubjubPoint, ValType::JubjubScalar) => {
@@ -242,7 +243,7 @@ fn affine_coordinates(
 
 fn select(parser: &mut ParserCPU, cond: &str, (x, y): &(String, String), output: &str) {
     let val_t = parser.infer_type(&[x.into(), y.into()]);
-    parser.load_constants(val_t, &[x.into(), y.into()]);
+    parser.load_constants(&val_t, &[x.into(), y.into()]);
 
     let cond = parser.get_t::<bool>(cond);
     parser.insert(output, parser.get(if cond { x } else { y }));
@@ -254,7 +255,7 @@ fn into_bytes(parser: &mut ParserCPU, input: &String, nb_bytes: usize, output: &
             let bytes = parser.get_t::<F>(input).to_bytes_le();
             assert!(nb_bytes <= F::NUM_BITS.div_ceil(8) as usize);
             assert!(bytes[nb_bytes..].iter().all(|&b| b == 0));
-            parser.insert(output, bytes[..nb_bytes].to_vec())
+            parser.insert(output, &bytes[..nb_bytes])
         }
         t => panic!("into_bytes unsupported on {:?}", t),
     }
@@ -262,10 +263,10 @@ fn into_bytes(parser: &mut ParserCPU, input: &String, nb_bytes: usize, output: &
 
 fn from_bytes(parser: &mut ParserCPU, val_t: &ValType, bytes_name: &String, output: &str) {
     let n = match parser.infer_type(std::slice::from_ref(bytes_name)) {
-        ValType::Bytes(n) => n,
+        ValType::Array(t, n) if *t == ValType::Byte => n,
         _ => panic!("TODO"),
     };
-    let bytes = parser.get_t::<Vec<u8>>(bytes_name);
+    let bytes = parser.get_t::<&[u8]>(bytes_name);
     assert_eq!(bytes.len(), n);
 
     match val_t {

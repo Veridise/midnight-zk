@@ -62,12 +62,12 @@ impl Relation for IrSource {
             .flat_map(|x| match x {
                 OffCircuitType::Bit(b) => AssignedBit::as_public_input(b),
                 OffCircuitType::Byte(b) => AssignedByte::as_public_input(b),
-                OffCircuitType::Bytes(v) => {
-                    v.iter().flat_map(AssignedByte::as_public_input).collect()
-                }
                 OffCircuitType::Native(x) => AssignedNative::as_public_input(x),
                 OffCircuitType::JubjubPoint(p) => AssignedJubjubPoint::as_public_input(p),
                 OffCircuitType::JubjubScalar(s) => AssignedJubjubScalar::as_public_input(s),
+                OffCircuitType::Array(array, n) => {
+                    (*array).iter().flat_map(Self::format_instance(instance)).collect()
+                }
             })
             .collect()
     }
