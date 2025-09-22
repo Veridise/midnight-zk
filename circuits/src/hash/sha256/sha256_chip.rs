@@ -628,10 +628,11 @@ impl<F: PrimeField> Sha256Chip<F> {
     /// Takes a 512-bits block, represented with 16 `AssignedPlain<32>` words.
     /// Outputs the 64 `AssignedPlain<32>` words Wi from SHA256's message
     /// schedule.
+    #[picus::group]
     pub(super) fn message_schedule(
         &self,
         layouter: &mut impl Layouter<F>,
-        block: &[AssignedPlain<F, 32>; 16],
+        #[input] block: &[AssignedPlain<F, 32>; 16],
     ) -> Result<[AssignedPlain<F, 32>; 64], Error> {
         let message_word = self.prepare_message_word(layouter, &[block[0].clone()])?;
         let mut message_words: [AssignedMessageWord<F>; 64] =
@@ -664,12 +665,13 @@ impl<F: PrimeField> Sha256Chip<F> {
     }
 
     /// A compression round. This is called 64 times per block.
+    #[picus::group]
     pub(super) fn compression_round(
         &self,
         layouter: &mut impl Layouter<F>,
-        state: &CompressionState<F>,
+        #[input] state: &CompressionState<F>,
         round_k: u32,
-        round_w: &AssignedPlain<F, 32>,
+        #[input] round_w: &AssignedPlain<F, 32>,
     ) -> Result<CompressionState<F>, Error> {
         let round_k = AssignedPlain::<F, 32>::fixed(layouter, &self.native_gadget, round_k)?;
 
