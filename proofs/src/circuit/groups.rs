@@ -134,7 +134,10 @@ impl RegionsGroup {
             return Ok(());
         }
         if self.annotations.contains_key(&cell) {
-            return Err(Error::Synthesis);
+            return Err(Error::Transcript(std::io::Error::other(format!(
+                "Failed to annotate cell {cell:?} with role {role:?}. Has role {:?}",
+                self.annotations.get(&cell)
+            ))));
         }
         self.cells.push(cell);
         self.annotations.insert(cell, role);
@@ -411,16 +414,10 @@ mod tests {
                 .unwrap();
                 let top_level = mock.top_level();
                 {
-                    let top_level: String = top_level
-                        .to_string()
-                        .chars()
-                        .filter(|c| !c.is_whitespace())
-                        .collect();
-                    let expected: String = $expected
-                        .to_string()
-                        .chars()
-                        .filter(|c| !c.is_whitespace())
-                        .collect();
+                    let top_level: String =
+                        top_level.to_string().chars().filter(|c| !c.is_whitespace()).collect();
+                    let expected: String =
+                        $expected.to_string().chars().filter(|c| !c.is_whitespace()).collect();
                     assert_eq!(top_level, expected);
                 }
                 ($checks)(&top_level);
@@ -809,8 +806,7 @@ mod tests {
 
     impl Ord for CellDisplay {
         fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-            self.partial_cmp(other)
-                .expect("partial_cmp implementation is a total order")
+            self.partial_cmp(other).expect("partial_cmp implementation is a total order")
         }
     }
 
