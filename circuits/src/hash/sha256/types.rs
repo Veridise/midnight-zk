@@ -55,7 +55,7 @@ pub(super) struct LimbsOfE<F: PrimeField> {
 /// word W of 32 bits. Input type of σ₀(W) and σ₁(W).
 /// The limb sizes are chosen to make the rotations required for σ₀ and σ₁
 /// efficient.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, picus::DecomposeInCells)]
 pub(super) struct AssignedMessageWord<F: PrimeField> {
     pub(super) combined_plain: AssignedPlain<F, 32>,
     pub(super) spreaded_w_12: AssignedSpreaded<F, 12>,
