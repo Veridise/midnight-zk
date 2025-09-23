@@ -1052,11 +1052,12 @@ impl<F: PrimeField> Sha256Chip<F> {
     }
 
     /// Computes σ₀(W).
-    #[picus::group]
+    //#[picus::group]
     fn sigma_0(
         &self,
         layouter: &mut impl Layouter<F>,
-        #[input] w: &AssignedMessageWord<F>,
+        //#[input]
+        w: &AssignedMessageWord<F>,
     ) -> Result<AssignedPlain<F, 32>, Error> {
         /*
         Given
@@ -1134,11 +1135,11 @@ impl<F: PrimeField> Sha256Chip<F> {
     }
 
     /// Computes σ₁(W).
-    #[picus::group]
+    //#[picus::group]
     fn sigma_1(
         &self,
         layouter: &mut impl Layouter<F>,
-        #[input] w: &AssignedMessageWord<F>,
+        /*#[input]*/ w: &AssignedMessageWord<F>,
     ) -> Result<AssignedPlain<F, 32>, Error> {
         /*
         Given
