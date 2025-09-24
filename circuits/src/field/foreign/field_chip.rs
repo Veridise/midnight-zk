@@ -279,7 +279,8 @@ where
     N: NativeInstructions<F>,
 {
     config: FieldChipConfig,
-    pub(crate) native_gadget: N,
+    /// Dani: Made public for the extractor.
+    pub native_gadget: N,
     _marker: PhantomData<(F, K, P, N)>,
 }
 
