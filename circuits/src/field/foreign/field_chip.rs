@@ -188,7 +188,10 @@ where
     /// claimed bounds, it is the responsibility of the caller to make sure
     /// that was asserted elsewhere.
     /// DO NOT use this function unless you know what you are doing.
-    pub(crate) fn from_limbs_unsafe(limb_values: Vec<AssignedNative<F>>) -> Self {
+    ///
+    /// Dani: Made public for the extractor, which constraints the limbs similarly to how
+    /// [`AssignmentInstructions::assign`] does it.
+    pub fn from_limbs_unsafe(limb_values: Vec<AssignedNative<F>>) -> Self {
         debug_assert!(limb_values.len() as u32 == P::NB_LIMBS);
         Self {
             limb_values,
