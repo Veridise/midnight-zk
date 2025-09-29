@@ -1446,10 +1446,11 @@ impl<F: PrimeField> Sha256Chip<F> {
     /// Given a slice of at most 7 `AssignedPlain` values, this function adds
     /// them modulo 2^32 and decomposes the result (named W_i) into (big-endian)
     /// limbs of bit sizes 12, 1, 1, 1, 7, 3, 4 and 3.
+    #[picus::group]
     fn prepare_message_word(
         &self,
         layouter: &mut impl Layouter<F>,
-        summands: &[AssignedPlain<F, 32>],
+        #[input] summands: &[AssignedPlain<F, 32>],
     ) -> Result<AssignedMessageWord<F>, Error> {
         /*
         Given assigned plain inputs S0, ..., S6 (if fewer inputs are given
