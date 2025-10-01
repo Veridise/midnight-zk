@@ -57,3 +57,9 @@ impl<T: DecomposeInCells, const N: usize> DecomposeInCells for [T; N] {
         self.iter().flat_map(|t| t.cells())
     }
 }
+
+impl<T: DecomposeInCells> DecomposeInCells for Vec<T> {
+    fn cells(&self) -> impl IntoIterator<Item = Cell> {
+        self.iter().flat_map(|t| t.cells())
+    }
+}
