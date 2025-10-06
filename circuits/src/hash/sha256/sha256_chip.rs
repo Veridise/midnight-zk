@@ -722,12 +722,13 @@ impl<F: PrimeField> Sha256Chip<F> {
     }
 
     /// Computes Maj(A, B, C).
+    #[picus::group]
     fn maj(
         &self,
         layouter: &mut impl Layouter<F>,
-        sprdd_a: &AssignedSpreaded<F, 32>,
-        sprdd_b: &AssignedSpreaded<F, 32>,
-        sprdd_c: &AssignedSpreaded<F, 32>,
+        #[input] sprdd_a: &AssignedSpreaded<F, 32>,
+        #[input] sprdd_b: &AssignedSpreaded<F, 32>,
+        #[input] sprdd_c: &AssignedSpreaded<F, 32>,
     ) -> Result<AssignedPlain<F, 32>, Error> {
         /*
         We need to compute:
@@ -793,12 +794,13 @@ impl<F: PrimeField> Sha256Chip<F> {
     }
 
     /// Computes Ch(E, F, G)
+    #[picus::group]
     fn ch(
         &self,
         layouter: &mut impl Layouter<F>,
-        sprdd_E: &AssignedSpreaded<F, 32>,
-        sprdd_F: &AssignedSpreaded<F, 32>,
-        sprdd_G: &AssignedSpreaded<F, 32>,
+        #[input] sprdd_E: &AssignedSpreaded<F, 32>,
+        #[input] sprdd_F: &AssignedSpreaded<F, 32>,
+        #[input] sprdd_G: &AssignedSpreaded<F, 32>,
     ) -> Result<AssignedPlain<F, 32>, Error> {
         /*
         We need to compute:
@@ -894,10 +896,11 @@ impl<F: PrimeField> Sha256Chip<F> {
     }
 
     /// Computes Σ₀(A).
+    #[picus::group]
     fn Sigma_0(
         &self,
         layouter: &mut impl Layouter<F>,
-        a: &LimbsOfA<F>,
+        #[input] a: &LimbsOfA<F>,
     ) -> Result<AssignedPlain<F, 32>, Error> {
         /*
         Given
@@ -972,10 +975,11 @@ impl<F: PrimeField> Sha256Chip<F> {
     }
 
     /// Computes Σ₁(E).
+    #[picus::group]
     fn Sigma_1(
         &self,
         layouter: &mut impl Layouter<F>,
-        e: &LimbsOfE<F>,
+        #[input] e: &LimbsOfE<F>,
     ) -> Result<AssignedPlain<F, 32>, Error> {
         /*
         Given
@@ -1291,10 +1295,11 @@ impl<F: PrimeField> Sha256Chip<F> {
     ///
     /// This function returns the plain and spreaded forms, as well as
     /// the spreaded limbs of A.
+    #[picus::group]
     fn prepare_A(
         &self,
         layouter: &mut impl Layouter<F>,
-        summands: &[AssignedPlain<F, 32>],
+        #[input] summands: &[AssignedPlain<F, 32>],
     ) -> Result<LimbsOfA<F>, Error> {
         /*
         Given assigned plain inputs S0, ..., S6 (if fewer inputs are given
@@ -1371,10 +1376,11 @@ impl<F: PrimeField> Sha256Chip<F> {
     ///
     /// This function returns the plain and spreaded forms, as well as
     /// the spreaded limbs of E.
+    #[picus::group]
     fn prepare_E(
         &self,
         layouter: &mut impl Layouter<F>,
-        summands: &[AssignedPlain<F, 32>],
+        #[input] summands: &[AssignedPlain<F, 32>],
     ) -> Result<LimbsOfE<F>, Error> {
         /*
         Given assigned plain inputs S0, ..., S6 (if fewer inputs are given
