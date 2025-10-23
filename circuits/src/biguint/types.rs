@@ -163,6 +163,7 @@ pub(crate) fn biguint_to_limbs<F: PrimeField>(value: &BigUint, nb_limbs: Option<
 #[cfg(feature = "extraction")]
 pub mod extraction {
     //! Extraction specific logic related to the biguint gadget.
+    use std::borrow::Borrow;
     use std::ops::Rem as _;
 
     use super::{AssignedBigUint, LOG2_BASE};
@@ -198,6 +199,12 @@ pub mod extraction {
         F: PrimeField,
     {
         const SIZE: usize = num_limbs(BITS) * AssignedNative::<F>::SIZE;
+    }
+
+    impl<F: PrimeField, const BITS: usize> Borrow<AssignedBigUint<F>> for LoadedBigUint<F, BITS> {
+        fn borrow(&self) -> &AssignedBigUint<F> {
+            &self.0
+        }
     }
 
     impl<F: PrimeField, const BITS: usize> From<LoadedBigUint<F, BITS>> for AssignedBigUint<F> {
