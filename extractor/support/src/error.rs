@@ -44,8 +44,10 @@ pub enum Error {
     #[error(transparent)]
     BigIntCast(#[from] TryFromBigIntError<BigInt>),
     /// Error when an encountered an unexpected number of elements.
-    #[error("Was expected {expected} elements but got {actual}")]
+    #[error("{header}Was expecting {expected} elements but got {actual}")]
     UnexpectedElements {
+        /// Context header for the error
+        header: &'static str,
         /// The expected number of elements.
         expected: usize,
         /// The number of elements.

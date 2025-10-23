@@ -233,6 +233,7 @@ pub mod extraction {
             let v = chip.as_public_input(layouter, &self)?;
             if v.len() != 2 {
                 return Err(Error::UnexpectedElements {
+                    header: "While storing a native point",
                     expected: 2,
                     actual: v.len(),
                 });
