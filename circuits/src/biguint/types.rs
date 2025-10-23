@@ -271,8 +271,8 @@ pub mod extraction {
                     .take(n_limbs)
                     .collect::<Result<Vec<_>, _>>()?;
             let mut limb_size_bounds = vec![LOG2_BASE; n_limbs];
-            *limb_size_bounds.last_mut().unwrap() =
-                ((n_limbs - 1).rem(LOG2_BASE as usize) + 1).try_into()?; // msl bound
+            let n_bits = std::cmp::max(BITS, 1) as u32;
+            *limb_size_bounds.last_mut().unwrap() = (n_bits - 1).rem(LOG2_BASE) + 1; // msl bound
             let be = AssignedBigUint {
                 limbs,
                 limb_size_bounds,
