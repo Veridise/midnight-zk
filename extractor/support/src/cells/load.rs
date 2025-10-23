@@ -68,3 +68,37 @@ load_const!(bool);
 load_const!(u8);
 load_const!(usize);
 load_const!(BigUint);
+
+impl<F: Field, C> LoadFromCells<F, C> for () {
+    fn load(
+        _: &mut ICtx,
+        _: &C,
+        _: &mut impl Layouter<F>,
+        _: &mut InjectedIR<F>,
+    ) -> Result<Self, Error> {
+        Ok(())
+    }
+}
+
+macro_rules! load_tuple {
+    ($($t:ident),+) => {
+        impl<F:Field,C,$( $t: LoadFromCells<F,C>, )+> LoadFromCells<F,C> for (
+                $( $t, )+
+            )
+        {
+            fn load(
+                ctx: &mut ICtx,
+                chip: &C,
+                layouter: &mut impl Layouter<F>,
+                injected_ir: &mut InjectedIR<F>,
+            ) -> Result<Self, Error> {
+                Ok(($( $t::load(ctx, chip, layouter, injected_ir)?, )+))
+            }
+        }
+    };
+}
+
+load_tuple!(A1, A2);
+load_tuple!(A1, A2, A3);
+load_tuple!(A1, A2, A3, A4);
+load_tuple!(A1, A2, A3, A4, A5);
