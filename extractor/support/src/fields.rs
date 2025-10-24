@@ -27,6 +27,17 @@ impl<C> LoadFromCells<Self, C> for Blstrs {
     }
 }
 
+impl<C> LoadFromCells<Blstrs, C> for MidnightFp {
+    fn load(
+        ctx: &mut ICtx,
+        _chip: &C,
+        _layouter: &mut impl Layouter<Blstrs>,
+        _injected_ir: &mut InjectedIR<Blstrs>,
+    ) -> Result<Self, Error> {
+        ctx.field_constant()
+    }
+}
+
 impl<C> LoadFromCells<Blstrs, C> for JubjubFr {
     fn load(
         ctx: &mut ICtx,

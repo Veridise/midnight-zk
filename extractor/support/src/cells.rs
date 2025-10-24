@@ -31,6 +31,7 @@ macro_rules! zero_size_repr {
 }
 
 zero_size_repr!(crate::fields::Blstrs);
+zero_size_repr!(crate::fields::MidnightFp);
 zero_size_repr!(crate::fields::JubjubFr);
 zero_size_repr!(crate::fields::Jubjub);
 zero_size_repr!(crate::fields::JubjubSubgroup);
