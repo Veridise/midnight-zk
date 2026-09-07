@@ -905,6 +905,7 @@ pub trait Circuit<F: Field> {
 /// Low-degree expression representing an identity that must hold over the
 /// committed columns.
 #[derive(Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "extraction", derive(haloumi_integration::Expression))]
 pub enum Expression<F> {
     /// This is a constant polynomial
     Constant(F),
@@ -1556,100 +1557,6 @@ impl<F: Field> Product<Self> for Expression<F> {
     }
 }
 
-#[cfg(feature = "extraction")]
-impl<F: Field> haloumi_core::expressions::ExpressionTypes for Expression<F> {
-    type Selector = Selector;
-    type FixedQuery = FixedQuery;
-    type AdviceQuery = AdviceQuery;
-    type InstanceQuery = InstanceQuery;
-    type Challenge = Challenge;
-}
-
-#[cfg(feature = "extraction")]
-impl<F: Field> haloumi_core::expressions::ExpressionInfo for Expression<F> {
-    fn as_negation(&self) -> Option<&Self> {
-        match self {
-            Expression::Negated(e) => Some(e.as_ref()),
-            _ => None,
-        }
-    }
-
-    fn as_fixed_query(&self) -> Option<&Self::FixedQuery> {
-        match self {
-            Expression::Fixed(q) => Some(q),
-            _ => None,
-        }
-    }
-}
-
-#[cfg(feature = "extraction")]
-impl<F: Field> haloumi_core::expressions::EvaluableExpr<F> for Expression<F> {
-    fn evaluate<E: haloumi_core::expressions::EvalExpression<F, Self>>(
-        &self,
-        evaluator: &E,
-    ) -> E::Output {
-        self.evaluate(
-            &|f| evaluator.constant(&f),
-            &|s| evaluator.selector(&s),
-            &|fq| evaluator.fixed(&fq),
-            &|aq| evaluator.advice(&aq),
-            &|iq| evaluator.instance(&iq),
-            &|c| evaluator.challenge(&c),
-            &|e| evaluator.negated(e),
-            &|lhs, rhs| evaluator.sum(lhs, rhs),
-            &|lhs, rhs| evaluator.product(lhs, rhs),
-            &|lhs, rhs| evaluator.scaled(lhs, &rhs),
-        )
-    }
-}
-
-#[cfg(feature = "extraction")]
-impl<F: Field> haloumi_core::expressions::ExprBuilder<F> for Expression<F> {
-    fn constant(f: F) -> Self {
-        Expression::Constant(f)
-    }
-
-    fn selector(
-        selector: <Expression<F> as haloumi_core::expressions::ExpressionTypes>::Selector,
-    ) -> Self {
-        Expression::Selector(selector)
-    }
-
-    fn fixed(fixed_query: Self::FixedQuery) -> Self {
-        Expression::Fixed(fixed_query)
-    }
-
-    fn advice(advice_query: Self::AdviceQuery) -> Self {
-        Expression::Advice(advice_query)
-    }
-
-    fn instance(instance_query: Self::InstanceQuery) -> Self {
-        Expression::Instance(instance_query)
-    }
-
-    fn challenge(
-        challenge: <Expression<F> as haloumi_core::expressions::ExpressionTypes>::Challenge,
-    ) -> Self {
-        Expression::Challenge(challenge)
-    }
-
-    fn negated(expr: Self) -> Self {
-        Expression::Negated(Box::new(expr))
-    }
-
-    fn sum(lhs: Self, rhs: Self) -> Self {
-        Expression::Sum(Box::new(lhs), Box::new(rhs))
-    }
-
-    fn product(lhs: Self, rhs: Self) -> Self {
-        Expression::Product(Box::new(lhs), Box::new(rhs))
-    }
-
-    fn scaled(lhs: Self, rhs: F) -> Self {
-        Expression::Scaled(Box::new(lhs), rhs)
-    }
-}
-
 /// A "virtual cell" is a PLONK cell that has been queried at a particular
 /// relative offset within a custom gate.
 #[derive(Clone, Debug)]
@@ -1793,6 +1700,7 @@ impl<F: Field> Constraints<F> {
 
 /// Gate
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "extraction", derive(haloumi_integration::GateInfo))]
 pub struct Gate<F: Field> {
     name: String,
     constraint_names: Vec<String>,
@@ -1828,20 +1736,13 @@ impl<F: Field> Gate<F> {
     }
 }
 
-#[cfg(feature = "extraction")]
-impl<F: Field> haloumi_core::info_traits::GateInfo<Expression<F>> for Gate<F> {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn polynomials(&self) -> &[Expression<F>] {
-        &self.polys
-    }
-}
-
 /// This is a description of the circuit environment, such as the gate, column
 /// and permutation arrangements.
 #[derive(Debug, Clone)]
+#[cfg_attr(
+    feature = "extraction",
+    derive(haloumi_integration::ConstraintSystemInfo)
+)]
 pub struct ConstraintSystem<F: Field> {
     pub(crate) num_fixed_columns: usize,
     pub(crate) num_advice_columns: usize,
@@ -1890,29 +1791,6 @@ pub struct ConstraintSystem<F: Field> {
     pub(crate) constants: Vec<Column<Fixed>>,
 
     pub(crate) minimum_degree: Option<usize>,
-}
-
-#[cfg(feature = "extraction")]
-impl<F: Field> haloumi_core::info_traits::ConstraintSystemInfo<F> for ConstraintSystem<F> {
-    type Polynomial = Expression<F>;
-
-    fn gates(&self) -> Vec<&dyn haloumi_core::info_traits::GateInfo<Self::Polynomial>> {
-        self.gates
-            .iter()
-            .map(|g| g as &dyn haloumi_core::info_traits::GateInfo<Self::Polynomial>)
-            .collect()
-    }
-
-    fn lookups<'cs>(&'cs self) -> Vec<haloumi_core::lookups::LookupData<'cs, Self::Polynomial>> {
-        self.lookups
-            .iter()
-            .map(|l| haloumi_core::lookups::LookupData {
-                name: l.name(),
-                arguments: &l.input_expressions,
-                table: &l.table_expressions,
-            })
-            .collect()
-    }
 }
 
 /// Represents the minimal parameters that determine a `ConstraintSystem`.
