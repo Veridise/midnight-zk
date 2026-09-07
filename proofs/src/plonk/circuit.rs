@@ -98,6 +98,9 @@ impl<C: ColumnType> PartialOrd for Column<C> {
 }
 
 #[cfg(feature = "extraction")]
+haloumi_integration::__impl_column_support!(ColumnType, Column, Any, Instance, Advice, Fixed);
+
+#[cfg(feature = "extraction")]
 pub mod extraction {
     //! Extraction support for column types.
 
@@ -117,81 +120,6 @@ pub mod extraction {
     auto_conf_impl!(MdntColumn<MdntInstance>, instance_column, crate);
     auto_conf_impl!(MdntColumn<MdntAdvice>, advice_column, crate);
     auto_conf_impl!(super::TableColumn, lookup_table_column, crate);
-
-    impl<F: MdntColumnType + Into<T>, T: ColumnType> From<MdntColumn<F>> for Column<T> {
-        fn from(value: MdntColumn<F>) -> Self {
-            Self::new(value.index, value.column_type.into())
-        }
-    }
-
-    impl TryFrom<MdntColumn<MdntAny>> for Column<Instance> {
-        type Error = <MdntColumn<MdntInstance> as TryFrom<MdntColumn<MdntAny>>>::Error;
-
-        fn try_from(value: MdntColumn<MdntAny>) -> Result<Self, Self::Error> {
-            MdntColumn::<MdntInstance>::try_from(value).map(Into::into)
-        }
-    }
-
-    impl TryFrom<MdntColumn<MdntAny>> for Column<Advice> {
-        type Error = <MdntColumn<MdntAdvice> as TryFrom<MdntColumn<MdntAny>>>::Error;
-
-        fn try_from(value: MdntColumn<MdntAny>) -> Result<Self, Self::Error> {
-            MdntColumn::<MdntAdvice>::try_from(value).map(Into::into)
-        }
-    }
-
-    impl TryFrom<MdntColumn<MdntAny>> for Column<Fixed> {
-        type Error = <MdntColumn<MdntFixed> as TryFrom<MdntColumn<MdntAny>>>::Error;
-
-        fn try_from(value: MdntColumn<MdntAny>) -> Result<Self, Self::Error> {
-            MdntColumn::<MdntFixed>::try_from(value).map(Into::into)
-        }
-    }
-
-    impl From<MdntAny> for Any {
-        fn from(value: MdntAny) -> Self {
-            match value {
-                MdntAny::Advice(_) => Any::Advice,
-                MdntAny::Fixed => Any::Fixed,
-                MdntAny::Instance => Any::Instance,
-            }
-        }
-    }
-
-    impl From<MdntInstance> for Instance {
-        fn from(_: MdntInstance) -> Self {
-            Self
-        }
-    }
-
-    impl From<MdntInstance> for Any {
-        fn from(_: MdntInstance) -> Self {
-            Self::Instance
-        }
-    }
-
-    impl From<MdntAdvice> for Advice {
-        fn from(_: MdntAdvice) -> Self {
-            Self
-        }
-    }
-
-    impl From<MdntAdvice> for Any {
-        fn from(_: MdntAdvice) -> Self {
-            Self::Advice
-        }
-    }
-
-    impl From<MdntFixed> for Fixed {
-        fn from(_: MdntFixed) -> Self {
-            Self
-        }
-    }
-    impl From<MdntFixed> for Any {
-        fn from(_: MdntFixed) -> Self {
-            Self::Fixed
-        }
-    }
 }
 
 pub(crate) mod sealed {
@@ -558,6 +486,7 @@ impl TryFrom<Column<Any>> for Column<Instance> {
 /// }
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "extraction", derive(haloumi_integration::SelectorInfo))]
 pub struct Selector(pub(crate) usize, bool);
 
 impl Selector {
@@ -583,15 +512,18 @@ impl Selector {
     }
 }
 
-#[cfg(feature = "extraction")]
-impl haloumi_core::info_traits::SelectorInfo for Selector {
-    fn id(&self) -> usize {
-        self.index()
-    }
-}
-
 /// Query of fixed column at a certain relative location
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "extraction",
+    derive(haloumi_integration::QueryInfo),
+    kind(Fixed)
+)]
+#[cfg_attr(
+    feature = "extraction",
+    derive(haloumi_integration::CreateQuery),
+    new(Fixed)
+)]
 pub struct FixedQuery {
     /// Query index
     pub(crate) index: Option<usize>,
@@ -617,28 +549,18 @@ impl FixedQuery {
     }
 }
 
-#[cfg(feature = "extraction")]
-impl haloumi_core::info_traits::QueryInfo for FixedQuery {
-    type Kind = haloumi_core::query::Fixed;
-
-    fn rotation(&self) -> haloumi_core::table::Rotation {
-        self.rotation.0
-    }
-
-    fn column_index(&self) -> usize {
-        self.column_index
-    }
-}
-
-#[cfg(feature = "extraction")]
-impl<F: Field> haloumi_core::info_traits::CreateQuery<Expression<F>> for FixedQuery {
-    fn query_expr(index: usize, at: haloumi_core::table::Rotation) -> Expression<F> {
-        Fixed.query_cell(index, Rotation(at))
-    }
-}
-
 /// Query of advice column at a certain relative location
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "extraction",
+    derive(haloumi_integration::QueryInfo),
+    kind(Advice)
+)]
+#[cfg_attr(
+    feature = "extraction",
+    derive(haloumi_integration::CreateQuery),
+    new(Advice::default())
+)]
 pub struct AdviceQuery {
     /// Query index
     pub index: Option<usize>,
@@ -667,28 +589,18 @@ impl AdviceQuery {
     }
 }
 
-#[cfg(feature = "extraction")]
-impl haloumi_core::info_traits::QueryInfo for AdviceQuery {
-    type Kind = haloumi_core::query::Advice;
-
-    fn rotation(&self) -> haloumi_core::table::Rotation {
-        self.rotation.0
-    }
-
-    fn column_index(&self) -> usize {
-        self.column_index
-    }
-}
-
-#[cfg(feature = "extraction")]
-impl<F: Field> haloumi_core::info_traits::CreateQuery<Expression<F>> for AdviceQuery {
-    fn query_expr(index: usize, at: haloumi_core::table::Rotation) -> Expression<F> {
-        Advice::default().query_cell(index, Rotation(at))
-    }
-}
-
 /// Query of instance column at a certain relative location
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "extraction",
+    derive(haloumi_integration::QueryInfo),
+    kind(Instance)
+)]
+#[cfg_attr(
+    feature = "extraction",
+    derive(haloumi_integration::CreateQuery),
+    new(Instance)
+)]
 pub struct InstanceQuery {
     /// Query index
     pub index: Option<usize>,
@@ -707,26 +619,6 @@ impl InstanceQuery {
     /// Rotation of this query
     pub fn rotation(&self) -> Rotation {
         self.rotation
-    }
-}
-
-#[cfg(feature = "extraction")]
-impl haloumi_core::info_traits::QueryInfo for InstanceQuery {
-    type Kind = haloumi_core::query::Instance;
-
-    fn rotation(&self) -> haloumi_core::table::Rotation {
-        self.rotation.0
-    }
-
-    fn column_index(&self) -> usize {
-        self.column_index
-    }
-}
-
-#[cfg(feature = "extraction")]
-impl<F: Field> haloumi_core::info_traits::CreateQuery<Expression<F>> for InstanceQuery {
-    fn query_expr(index: usize, at: haloumi_core::table::Rotation) -> Expression<F> {
-        Instance.query_cell(index, Rotation(at))
     }
 }
 
@@ -763,6 +655,7 @@ impl TableColumn {
 /// A challenge squeezed from transcript after advice columns at the phase have
 /// been committed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "extraction", derive(haloumi_integration::ChallengeInfo))]
 pub struct Challenge {
     index: usize,
     pub(crate) phase: sealed::Phase,
@@ -782,17 +675,6 @@ impl Challenge {
     /// Return Expression
     pub fn expr<F: Field>(&self) -> Expression<F> {
         Expression::Challenge(*self)
-    }
-}
-
-#[cfg(feature = "extraction")]
-impl haloumi_core::info_traits::ChallengeInfo for Challenge {
-    fn index(&self) -> usize {
-        self.index
-    }
-
-    fn phase(&self) -> u8 {
-        self.phase()
     }
 }
 

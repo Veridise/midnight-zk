@@ -54,7 +54,9 @@ num-bigint = { workspace = true }
 # Extraction dependencies 
 picus-support = { workspace = true, optional = true }
 extractor-support = { workspace = true, optional = true }
-haloumi-core = { version = "0", optional = true }
+# haloumi-core = { version = "0", optional = true }
+haloumi-integration = { path = "../../haloumi/integration/", optional = true }
+haloumi-core = { path = "../../haloumi/core/", optional = true }
 
 [dev-dependencies]
 assert_matches = "1.5"
@@ -75,7 +77,7 @@ midnight-curves = { path = "../curves", features = ["portable"] }
 default = ["committed-instances"]
 circuit-params = []
 decompose-in-cells = ["picus-support"]
-extraction = ["extractor-support", "decompose-in-cells", "haloumi-core"]
+extraction = ["extractor-support", "decompose-in-cells", "haloumi-integration", "haloumi-core"]
 region-groups = []
 derive_serde = ["midnight-curves/serde"]
 dev-curves = ["midnight-curves/serde"]
