@@ -215,20 +215,35 @@ impl<'a, F: Field, CS: Assignment<F> + 'a + SyncDeps> Layouter<F>
     fn pop_namespace(&mut self, gadget_name: Option<String>) {
         self.cs.pop_namespace(gadget_name)
     }
+}
 
-    #[cfg(feature = "region-groups")]
-    fn push_group<N, NR, K>(&mut self, name: N, key: K)
+#[cfg(feature = "region-groups")]
+impl<'a, F: Field, CS: Assignment<F> + 'a + SyncDeps>
+    haloumi_integration::core::groups::RegionsGroupHooks<F, crate::circuit::Cell>
+    for SingleChipLayouter<'a, F, CS>
+{
+    type Error = crate::plonk::Error;
+
+    type RootHook = Self;
+
+    fn get_root_hook(&mut self) -> &mut Self::RootHook {
+        unimplemented!()
+    }
+
+    fn push_group<N, NR, K>(&mut self, _name: N, _key: K)
     where
         NR: Into<String>,
         N: FnOnce() -> NR,
-        K: crate::circuit::groups::GroupKey,
+        K: haloumi_integration::core::groups::GroupKey,
     {
-        self.cs.enter_group(name, key)
+        unimplemented!()
     }
 
-    #[cfg(feature = "region-groups")]
-    fn pop_group(&mut self, meta: crate::circuit::groups::RegionsGroup) {
-        self.cs.exit_group(meta)
+    fn pop_group(
+        &mut self,
+        _meta: haloumi_integration::core::groups::RegionsGroup<crate::circuit::Cell>,
+    ) {
+        unimplemented!()
     }
 }
 

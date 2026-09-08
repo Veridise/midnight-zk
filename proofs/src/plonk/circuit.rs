@@ -105,20 +105,12 @@ pub mod extraction {
     //! Extraction support for column types.
 
     use extractor_support::{auto_conf_impl, circuit::configuration::AutoConfigure};
-    use haloumi_core::{
-        query::{Advice, Fixed, Instance},
-        table::{Any, Column, ColumnType},
-    };
 
-    use super::{
-        Advice as MdntAdvice, Any as MdntAny, Column as MdntColumn, Fixed as MdntFixed,
-        Instance as MdntInstance,
-    };
-    use crate::plonk::ColumnType as MdntColumnType;
+    use super::{Advice, Column, Fixed, Instance};
 
-    auto_conf_impl!(MdntColumn<MdntFixed>, fixed_column, crate);
-    auto_conf_impl!(MdntColumn<MdntInstance>, instance_column, crate);
-    auto_conf_impl!(MdntColumn<MdntAdvice>, advice_column, crate);
+    auto_conf_impl!(Column<Fixed>, fixed_column, crate);
+    auto_conf_impl!(Column<Instance>, instance_column, crate);
+    auto_conf_impl!(Column<Advice>, advice_column, crate);
     auto_conf_impl!(super::TableColumn, lookup_table_column, crate);
 }
 
@@ -801,31 +793,31 @@ pub trait Assignment<F: Field> {
     /// [`Layouter::namespace`]: crate::circuit::Layouter#method.namespace
     fn pop_namespace(&mut self, gadget_name: Option<String>);
 
-    /// Creates a new group and enters into it.
-    ///
-    /// Not intended for downstream consumption; use [`Layouter::group`]
-    /// instead.
-    ///
-    /// [`Layouter::group`]: crate::circuit::Layouter#method.group
-    #[cfg(feature = "region-groups")]
-    #[allow(unused_variables)]
-    fn enter_group<NR, N, K>(&mut self, name_fn: N, key: K)
-    where
-        NR: Into<String>,
-        N: FnOnce() -> NR,
-        K: crate::circuit::groups::GroupKey,
-    {
-    }
-
-    /// Exits the current group.
-    ///
-    /// Not intended for downstream consumption; use [`Layouter::group`]
-    /// instead.
-    ///
-    /// [`Layouter::group`]: crate::circuit::Layouter#method.group
-    #[cfg(feature = "region-groups")]
-    #[allow(unused_variables)]
-    fn exit_group(&mut self, meta: crate::circuit::groups::RegionsGroup) {}
+    ///// Creates a new group and enters into it.
+    /////
+    ///// Not intended for downstream consumption; use [`Layouter::group`]
+    ///// instead.
+    /////
+    ///// [`Layouter::group`]: crate::circuit::Layouter#method.group
+    //#[cfg(feature = "region-groups")]
+    //#[allow(unused_variables)]
+    //fn enter_group<NR, N, K>(&mut self, name_fn: N, key: K)
+    //where
+    //    NR: Into<String>,
+    //    N: FnOnce() -> NR,
+    //    K: crate::circuit::groups::GroupKey,
+    //{
+    //}
+    //
+    ///// Exits the current group.
+    /////
+    ///// Not intended for downstream consumption; use [`Layouter::group`]
+    ///// instead.
+    /////
+    ///// [`Layouter::group`]: crate::circuit::Layouter#method.group
+    //#[cfg(feature = "region-groups")]
+    //#[allow(unused_variables)]
+    //fn exit_group(&mut self, meta: crate::circuit::groups::RegionsGroup) {}
 }
 
 /// A floor planning strategy for a circuit.

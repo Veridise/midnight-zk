@@ -230,21 +230,37 @@ impl<F: Field, L: Layouter<F>> Layouter<F> for TracingLayouter<F, L> {
         self.layouter.pop_namespace(gadget_name);
         self.namespace_spans.pop();
     }
+}
 
-    #[cfg(feature = "region-groups")]
+#[cfg(feature = "region-groups")]
+impl<F, L> haloumi_integration::core::groups::RegionsGroupHooks<F, crate::circuit::Cell>
+    for TracingLayouter<F, L>
+where
+    L: haloumi_integration::core::groups::RegionsGroupHooks<F, crate::circuit::Cell> + Layouter<F>,
+    F: Field,
+{
+    type Error = crate::plonk::Error;
+    type RootHook = Self;
+
+    fn get_root_hook(&mut self) -> &mut Self::RootHook {
+        self
+    }
+
     fn push_group<N, NR, K>(&mut self, name: N, key: K)
     where
         NR: Into<String>,
         N: FnOnce() -> NR,
-        K: crate::circuit::groups::GroupKey,
+        K: haloumi_integration::core::groups::GroupKey,
     {
         let name = name().into();
         self.namespace_spans.push(debug_span!("group", name).entered());
         self.layouter.push_group(|| name, key);
     }
 
-    #[cfg(feature = "region-groups")]
-    fn pop_group(&mut self, meta: crate::circuit::groups::RegionsGroup) {
+    fn pop_group(
+        &mut self,
+        meta: haloumi_integration::core::groups::RegionsGroup<crate::circuit::Cell>,
+    ) {
         self.layouter.pop_group(meta)
     }
 }

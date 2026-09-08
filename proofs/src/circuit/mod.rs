@@ -100,6 +100,11 @@ impl std::ops::Deref for RegionStart {
 
 /// A pointer to a cell within a circuit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "decompose-in-cells",
+    derive(haloumi_integration::DecomposeInCells),
+    cell(Self)
+)]
 pub struct Cell {
     /// Identifies the region in which this cell resides.
     pub region_index: RegionIndex,
@@ -107,13 +112,6 @@ pub struct Cell {
     pub row_offset: usize,
     /// The column of this cell.
     pub column: Column<Any>,
-}
-
-#[cfg(feature = "decompose-in-cells")]
-impl picus_support::DecomposeIn<Self> for Cell {
-    fn cells(&self) -> impl IntoIterator<Item = Self> {
-        std::iter::once(*self)
-    }
 }
 
 #[cfg(feature = "extraction")]
@@ -129,7 +127,12 @@ impl From<Cell> for haloumi_core::table::Cell {
 
 /// An assigned cell.
 #[derive(Clone, Debug)]
+#[cfg_attr(
+    feature = "decompose-in-cells",
+    derive(haloumi_integration::DecomposeInCells)
+)]
 pub struct AssignedCell<V, F: Field> {
+    #[skip]
     value: Value<V>,
     cell: Cell,
     _marker: PhantomData<F>,
@@ -241,13 +244,6 @@ where
         region.constrain_equal(assigned_cell.cell(), self.cell())?;
 
         Ok(assigned_cell)
-    }
-}
-
-#[cfg(feature = "decompose-in-cells")]
-impl<V, F: Field> picus_support::DecomposeIn<Cell> for AssignedCell<V, F> {
-    fn cells(&self) -> impl IntoIterator<Item = Cell> {
-        std::iter::once(self.cell())
     }
 }
 
@@ -563,6 +559,7 @@ impl<F: Field> Table<'_, F> {
 /// applies its strategy to the context and config it is given.
 ///
 /// This abstracts over the circuit assignments, handling row indices etc.
+#[cfg_attr(feature = "region-groups", haloumi_integration::require_group_hooks)]
 pub trait Layouter<F: Field> {
     /// Represents the type of the "root" of this layouter, so that nested
     /// namespaces can minimize indirection.
@@ -647,90 +644,6 @@ pub trait Layouter<F: Field> {
 
         NamespacedLayouter(self.get_root(), PhantomData)
     }
-
-    /// Creates a new group and enters into it.
-    ///
-    /// Not intended for downstream consumption; use [`Layouter::group`]
-    /// instead.
-    #[cfg(feature = "region-groups")]
-    fn push_group<N, NR, K>(&mut self, name: N, key: K)
-    where
-        NR: Into<String>,
-        N: FnOnce() -> NR,
-        K: groups::GroupKey;
-
-    /// Exits out of the group.
-    ///
-    /// Not intended for downstream consumption; use [`Layouter::group`]
-    /// instead.
-    #[cfg(feature = "region-groups")]
-    fn pop_group(&mut self, meta: groups::RegionsGroup);
-
-    /// Groups a set of regions together.
-    ///
-    /// Inside the closure the chip can use [`groups::GroupLayouter`] to define
-    /// the regions that are part of the group and [`groups::RegionsGroup`]
-    /// to add annotations to the group. See the documentation of that
-    /// struct for more details about what can be annotated. These annotations
-    /// are intended for upstream consumers and may have additional
-    /// requirements the annotations must meet.
-    ///
-    /// Expects an implementation of [`groups::GroupKey`] with a key that
-    /// uniquely identifies the group. The [`crate::default_group_key!`]
-    /// macro offers an implementation based on the source code location
-    /// where the group was created, which should be enough for most cases. If
-    /// you have additional requirements for uniquely identifing your groups
-    /// you can add your own implementation of [`groups::GroupKey`] and use
-    /// that instead.
-    ///
-    /// This key is intended for upstream consumers that need to know what
-    /// groups are equivalent.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// fn sum(&self,
-    ///     layouter: &mut impl Layouter<F>,
-    ///     lhs: &AssignedCell<F, F>,
-    ///     rhs: &AssignedCell<F, F>
-    /// ) -> Result<AssignedCell<F, F>, Error> { /*...*/ }
-    ///
-    /// fn sum3(
-    ///     &self,
-    ///     layouter: &mut impl Layouter<F>,
-    ///     x: &AssignedCell<F, F>,
-    ///     y: &AssignedCell<F, F>,
-    ///     z: &AssignedCell<F, F>
-    /// ) -> Result<AssignedCell<F, F>, Error> {
-    ///     layouter.group(|| "sum3", default_group_key!(), |layouter, group| {
-    ///         // Annotate the role of the input cells
-    ///         group.annotate_inputs([x.cell(), y.cell(), z.cell()]);
-    ///
-    ///         let tmp = self.sum(layouter, x, y)?;
-    ///         let o = self.sum(layouter, &tmp, z)?;
-    ///
-    ///         // Assign the output role to the result cell.
-    ///         group.annotate_output(o.cell());
-    ///         Ok(o)
-    ///     });
-    /// }
-    /// ```
-    #[cfg(feature = "region-groups")]
-    fn group<A, AR, N, NR, K>(&mut self, name: N, key: K, mut assignment: A) -> Result<AR, Error>
-    where
-        A: FnMut(
-            &mut groups::GroupLayouter<'_, F, Self::Root>,
-            &mut groups::RegionsGroup,
-        ) -> Result<AR, Error>,
-        NR: Into<String>,
-        N: FnOnce() -> NR,
-        K: groups::GroupKey,
-    {
-        self.get_root().push_group(name, key);
-
-        let mut scope = groups::GroupScope::new(self.get_root());
-        assignment(&mut scope.layouter, &mut scope.meta)
-    }
 }
 
 /// This is a "namespaced" layouter which borrows a `Layouter` (pushing a
@@ -787,19 +700,31 @@ impl<'a, F: Field, L: Layouter<F> + 'a> Layouter<F> for NamespacedLayouter<'a, F
     fn pop_namespace(&mut self, _gadget_name: Option<String>) {
         panic!("Only the root's pop_namespace should be called");
     }
+}
 
-    #[cfg(feature = "region-groups")]
+#[cfg(feature = "region-groups")]
+impl<'a, F: Field, L: Layouter<F> + 'a>
+    haloumi_integration::core::groups::RegionsGroupHooks<F, Cell> for NamespacedLayouter<'a, F, L>
+where
+    L: haloumi_integration::core::groups::RegionsGroupHooks<F, Cell>,
+{
+    type Error = crate::plonk::Error;
+    type RootHook = L::RootHook;
+
+    fn get_root_hook(&mut self) -> &mut Self::RootHook {
+        self.0.get_root_hook()
+    }
+
     fn push_group<N, NR, K>(&mut self, name: N, key: K)
     where
         NR: Into<String>,
         N: FnOnce() -> NR,
-        K: groups::GroupKey,
+        K: haloumi_integration::core::groups::GroupKey,
     {
         self.0.push_group(name, key)
     }
 
-    #[cfg(feature = "region-groups")]
-    fn pop_group(&mut self, meta: groups::RegionsGroup) {
+    fn pop_group(&mut self, meta: haloumi_integration::core::groups::RegionsGroup<Cell>) {
         self.0.pop_group(meta)
     }
 }

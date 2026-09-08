@@ -78,7 +78,7 @@ default = ["committed-instances"]
 circuit-params = []
 decompose-in-cells = ["picus-support"]
 extraction = ["extractor-support", "decompose-in-cells", "haloumi-integration", "haloumi-core"]
-region-groups = []
+region-groups = ["haloumi-integration"]
 derive_serde = ["midnight-curves/serde"]
 dev-curves = ["midnight-curves/serde"]
 

@@ -95,7 +95,7 @@ impl error::Error for Error {
 }
 
 #[cfg(feature = "extraction")]
-impl From<Error> for extractor_support::error::Error {
+impl From<Error> for haloumi_integration::error::Error {
     fn from(value: Error) -> Self {
         use std::sync::Arc;
 
@@ -104,8 +104,8 @@ impl From<Error> for extractor_support::error::Error {
 }
 
 #[cfg(feature = "extraction")]
-impl From<extractor_support::error::Error> for Error {
-    fn from(value: extractor_support::error::Error) -> Self {
+impl From<haloumi_integration::error::Error> for Error {
+    fn from(value: haloumi_integration::error::Error) -> Self {
         Self::Transcript(std::io::Error::other(value))
     }
 }

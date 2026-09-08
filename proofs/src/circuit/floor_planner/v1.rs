@@ -227,20 +227,35 @@ impl<F: Field, CS: Assignment<F> + SyncDeps> Layouter<F> for V1Pass<'_, '_, F, C
             pass.plan.cs.pop_namespace(gadget_name);
         }
     }
+}
 
-    #[cfg(feature = "region-groups")]
+#[cfg(feature = "region-groups")]
+impl<F: Field, CS: Assignment<F> + SyncDeps>
+    haloumi_integration::core::groups::RegionsGroupHooks<F, crate::circuit::Cell>
+    for V1Pass<'_, '_, F, CS>
+{
+    type Error = crate::plonk::Error;
+
+    type RootHook = Self;
+
+    fn get_root_hook(&mut self) -> &mut Self::RootHook {
+        unimplemented!()
+    }
+
     fn push_group<N, NR, K>(&mut self, _name: N, _key: K)
     where
         NR: Into<String>,
         N: FnOnce() -> NR,
-        K: crate::circuit::groups::GroupKey,
+        K: haloumi_integration::core::groups::GroupKey,
     {
-        todo!("V1 floor planner doesn't support groups yet")
+        unimplemented!()
     }
 
-    #[cfg(feature = "region-groups")]
-    fn pop_group(&mut self, _meta: crate::circuit::groups::RegionsGroup) {
-        todo!("V1 floor planner doesn't support groups yet")
+    fn pop_group(
+        &mut self,
+        _meta: haloumi_integration::core::groups::RegionsGroup<crate::circuit::Cell>,
+    ) {
+        unimplemented!()
     }
 }
 

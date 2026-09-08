@@ -16,13 +16,13 @@ pub mod transcript;
 pub mod dev;
 pub mod utils;
 
-/// Implementation of [`Halo2Types`](extractor_support::Halo2Types).
+/// Implementation of [`Types`](extractor_support::Types).
 #[derive(Debug)]
 #[cfg(feature = "extraction")]
 pub struct ExtractionSupport;
 
 #[cfg(feature = "extraction")]
-impl<F: ff::Field> extractor_support::Halo2Types<F> for ExtractionSupport {
+impl<F: ff::Field> extractor_support::Types<F> for ExtractionSupport {
     type InstanceCol = crate::plonk::Column<crate::plonk::Instance>;
 
     type AdviceCol = crate::plonk::Column<crate::plonk::Advice>;
